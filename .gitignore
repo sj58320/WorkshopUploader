@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.log
+.venv/
+build/
+dist/
+
+/in/additional_files/*
+!/in/additional_files/.gitkeep
+/in/rss_banner.*
+/out/__cache__/
+/out/pack/
