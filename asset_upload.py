@@ -80,11 +80,11 @@ def parse_args() -> argparse.Namespace:
         "--description",
         help="Workshop description. Omit it to preserve an existing description.",
     )
-    args = parser.parse_args()
     parser.add_argument(
         "--change-note",
         help="Steam Workshop update note. Blank input defaults to 'Update asset'.",
     )
+    args = parser.parse_args()
     if args.workshop_id < 0:
         parser.error("workshop_id must be 0 or a positive integer")
     if args.chunk_size_mb < 1:

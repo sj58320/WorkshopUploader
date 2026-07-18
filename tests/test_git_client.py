@@ -46,6 +46,10 @@ class GitRunnerTests(unittest.TestCase):
         command, options = process.calls[0]
         self.assertEqual(command[0], r"C:\bundle\mingit\cmd\git.exe")
         self.assertEqual(options["env"]["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(options["env"]["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertIn(options["env"]["GIT_CONFIG_GLOBAL"], ("NUL", "/dev/null"))
+        self.assertEqual(options["env"]["GIT_CONFIG_KEY_1"], "http.sslVerify")
+        self.assertEqual(options["env"]["GIT_CONFIG_VALUE_1"], "true")
         self.assertEqual(options["env"]["GIT_CONFIG_KEY_0"], "credential.helper")
         self.assertEqual(options["env"]["GIT_CONFIG_VALUE_0"], "")
 

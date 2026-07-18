@@ -7,6 +7,30 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$clientId = [Environment]::GetEnvironmentVariable('WORKSHOP_UPLOADER_GITHUB_CLIENT_ID')
+if ([String]::IsNullOrWhiteSpace($clientId)) {
+    throw 'WORKSHOP_UPLOADER_GITHUB_CLIENT_ID must be set before building a release.'
+}
+
+$fetchMinGitScript = Join-Path $PSScriptRoot 'fetch_mingit.ps1'
+if (-not (Test-Path -LiteralPath $fetchMinGitScript)) {
+    throw "MinGit fetch script was not found: $fetchMinGitScript"
+}
+$minGitRoot = & $fetchMinGitScript
+$minGitExe = Join-Path $minGitRoot 'cmd\git.exe'
+if (-not (Test-Path -LiteralPath $minGitExe)) {
+    throw "Bundled Git executable was not found: $minGitExe"
+}
+
+$vendorRoot = Join-Path $repoRoot '.vendor'
+$githubConfigPath = Join-Path $vendorRoot 'github_app.json'
+$githubConfig = [ordered]@{
+    client_id = $clientId.Trim()
+    repository_id = 1157838808
+} | ConvertTo-Json -Compress
+$utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+[IO.File]::WriteAllText($githubConfigPath, $githubConfig, $utf8WithoutBom)
+
 $buildRoot = Join-Path $repoRoot 'build'
 $distRoot = Join-Path $repoRoot 'dist'
 $releaseExe = Join-Path $distRoot "WorkshopUploader-$Version.exe"
@@ -67,6 +91,10 @@ $pyInstallerArgs = @(
     "$repoRoot\third_party\SteamworksPy\LICENSE;third_party\SteamworksPy",
     '--add-data',
     "$repoRoot\third_party\PyInstaller\COPYING.txt;third_party\PyInstaller",
+    '--add-data',
+    "$minGitRoot;mingit",
+    '--add-data',
+    "$githubConfigPath;.",
     (Join-Path $repoRoot 'workshop_uploader_gui.py')
 )
 

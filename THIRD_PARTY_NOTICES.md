@@ -1,5 +1,13 @@
 # Third-party notices
 
+## Git for Windows (MinGit) 2.55.0.3
+
+- Project: https://gitforwindows.org/
+- Source: https://github.com/git-for-windows/git/tree/v2.55.0.windows.3
+- License: GPL-2.0-only, plus licenses for bundled third-party components
+- Purpose: provides the self-contained Git client used by optional GitHub asset sync
+- The complete corresponding source and license information are available from the project and source links above.
+
 이 배포판에는 아래 제3자 구성요소가 포함됩니다.
 
 ## VPKEdit CLI 4.4.2

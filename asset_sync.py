@@ -34,6 +34,10 @@ class SyncResult:
     message: str
     conflicts: tuple[str, ...] = ()
 
+class AssetRepositoryError(RuntimeError):
+    pass
+
+
 
 class AssetRepository:
     def __init__(
@@ -79,17 +83,53 @@ class AssetRepository:
                 SyncState.ERROR,
                 f"Git 저장소가 올바르지 않습니다: {self.root}",
             )
-        origin = self._git(["remote", "get-url", "origin"], check=False)
-        if origin.returncode != 0 or self._normalized_remote(
-            origin.stdout
-        ) != self._normalized_remote(self.remote_url):
-            return SyncResult(SyncState.ERROR, "origin이 지정된 에셋 저장소와 다릅니다.")
+        expected_remote = self._normalized_remote(self.remote_url)
+        remote_commands = (
+            ["remote", "get-url", "--all", "origin"],
+            ["remote", "get-url", "--push", "--all", "origin"],
+        )
+        for command in remote_commands:
+            result = self._git(command, check=False)
+            urls = tuple(
+                self._normalized_remote(line)
+                for line in result.stdout.splitlines()
+                if line.strip()
+            )
+            if result.returncode != 0 or not urls or any(
+                url != expected_remote for url in urls
+            ):
+                return SyncResult(
+                    SyncState.ERROR,
+                    "origin의 fetch/push URL이 지정된 에셋 저장소와 다릅니다.",
+                )
+        rewrites = self._git(
+            ["config", "--local", "--get-regexp", "^url\\..*\\.(insteadof|pushinsteadof)$"],
+            check=False,
+        )
+        if rewrites.returncode == 0 and rewrites.stdout.strip():
+            return SyncResult(SyncState.ERROR, "로컬 Git URL 재작성 설정은 허용되지 않습니다.")
         branch = self._git(["branch", "--show-current"], check=False).stdout.strip()
         if branch != self.branch:
             return SyncResult(
                 SyncState.ERROR,
                 f"현재 브랜치가 {self.branch}이 아닙니다: {branch or 'detached HEAD'}",
             )
+
+    def _require_valid_repository(self) -> None:
+        validation = self._validate_repository()
+        if validation is not None:
+            raise AssetRepositoryError(validation.message)
+
+    def _fetch_fixed_remote(self) -> None:
+        self._git(
+            [
+                "fetch",
+                "--prune",
+                self.remote_url,
+                f"+refs/heads/{self.branch}:refs/remotes/origin/{self.branch}",
+            ],
+            credential=True,
+        )
         return None
 
     def _conflicts(self) -> tuple[str, ...]:
@@ -140,6 +180,9 @@ class AssetRepository:
     def head(self) -> str:
         return self._git(["rev-parse", "HEAD"]).stdout.strip()
 
+    def head_message(self) -> str:
+        return self._git(["show", "-s", "--format=%B", "HEAD"]).stdout.rstrip()
+
     def prepare(self) -> SyncResult:
         if not self.root.exists():
             self.progress(SyncState.DOWNLOADING, "최초 에셋을 다운로드하는 중...")
@@ -176,10 +219,7 @@ class AssetRepository:
         except GitCommandError as error:
             return self._error_result(error)
         try:
-            self._git(
-                ["fetch", "--prune", "origin", self.branch],
-                credential=True,
-            )
+            self._fetch_fixed_remote()
             if self.has_pending_commits():
                 self._git(["rebase", f"origin/{self.branch}"])
             elif self._count(f"HEAD..origin/{self.branch}") > 0:
@@ -202,20 +242,21 @@ class AssetRepository:
         return SyncResult(SyncState.READY, "최신 상태")
 
     def commit(self, note: str, user: GitHubUser) -> str:
+        self._require_valid_repository()
         self._git(["config", "user.name", user.login])
         self._git(["config", "user.email", user.commit_email])
         self._git(["add", "-A", "--", ASSET_SUBDIR.as_posix()])
-        self._git(["commit", "--allow-empty", "--file", "-"], stdin=note)
+        self._git(["commit", "--only", "--allow-empty", "--file", "-", "--",
+                   ASSET_SUBDIR.as_posix()], stdin=note)
         return self.head()
 
     def push(self) -> None:
-        self._git(
-            ["fetch", "--prune", "origin", self.branch],
-            credential=True,
-        )
+        self._require_valid_repository()
+        self._fetch_fixed_remote()
         if self._count(f"HEAD..origin/{self.branch}") > 0:
             self._git(["rebase", f"origin/{self.branch}"])
+        self._require_valid_repository()
         self._git(
-            ["push", "origin", f"HEAD:{self.branch}"],
+            ["push", self.remote_url, f"HEAD:refs/heads/{self.branch}"],
             credential=True,
         )

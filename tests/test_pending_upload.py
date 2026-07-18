@@ -7,15 +7,27 @@ from pathlib import Path
 from pending_upload import (
     PendingUpload,
     PendingUploadError,
+    PendingPhase,
     PendingUploadStore,
 )
 
 
 PENDING = PendingUpload(
-    schema_version=1,
+    schema_version=2,
+    phase=PendingPhase.STEAM_SUCCEEDED,
     workshop_id=1234567890,
     note="add models\nfix materials",
     steam_succeeded_at="2026-07-18T12:00:00Z",
+    base_commit="a" * 40,
+    commit_id=None,
+)
+
+STARTED = PendingUpload(
+    schema_version=2,
+    phase=PendingPhase.STEAM_STARTED,
+    workshop_id=0,
+    note="Update asset",
+    steam_succeeded_at=None,
     base_commit="a" * 40,
     commit_id=None,
 )
@@ -35,13 +47,21 @@ class PendingUploadStoreTests(unittest.TestCase):
     def test_unknown_schema_is_reported_without_deleting_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "pending_upload.json"
-            path.write_text('{"schema_version":2}', encoding="utf-8")
+            path.write_text('{"schema_version":99}', encoding="utf-8")
             store = PendingUploadStore(path)
 
             with self.assertRaises(PendingUploadError):
                 store.load()
 
             self.assertTrue(path.exists())
+
+    def test_steam_started_phase_is_valid_and_round_trips(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = PendingUploadStore(Path(temporary_directory) / "pending.json")
+
+            store.save(STARTED)
+
+            self.assertEqual(store.load(), STARTED)
 
     def test_clear_and_missing_load_are_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -8,7 +8,7 @@ from app_settings import AssetSourceMode
 from asset_sync import SyncResult, SyncState
 from asset_upload import UploadResult
 from github_auth import GitHubSession, GitHubUser
-from pending_upload import PendingUpload
+from pending_upload import PendingUpload, PendingPhase
 from upload_workflow import UploadOptions, UploadWorkflow, WorkflowBlocked
 from windows_credentials import GitHubCredential
 
@@ -23,6 +23,7 @@ class FakeUploader:
     def __init__(self) -> None:
         self.calls: list[dict] = []
         self.error: Exception | None = None
+        self.on_call = None
 
     def __call__(self, workshop_id, chunk_size_mb, pack_only, **kwargs):
         self.calls.append(
@@ -33,6 +34,8 @@ class FakeUploader:
                 **kwargs,
             }
         )
+        if self.on_call is not None:
+            self.on_call()
         if self.error is not None:
             raise self.error
         return UploadResult(Path(kwargs["output_folder"]), workshop_id, not pack_only)
@@ -47,16 +50,26 @@ class FakeRepository:
         self.push_errors: list[Exception | None] = []
         self.push_count = 0
         self.current_head = "a" * 40
+        self.pending_commits = False
+        self.current_head_message = ""
 
     def prepare(self) -> SyncResult:
         return self.prepare_result
 
     def head(self) -> str:
         return self.current_head
+    def head_message(self) -> str:
+        return self.current_head_message
+
+    def has_pending_commits(self) -> bool:
+        return self.pending_commits
+
 
     def commit(self, note: str, user: GitHubUser) -> str:
         self.commit_calls.append((note, user))
         self.current_head = "b" * 40
+        self.current_head_message = note
+        self.pending_commits = True
         return self.current_head
 
     def push(self) -> None:
@@ -150,6 +163,21 @@ class UploadWorkflowTests(unittest.TestCase):
         self.assertFalse(self.pending_store.exists())
         self.assertEqual(self.repository.commit_calls, [])
 
+    def test_recovery_intent_is_saved_before_steam_starts(self) -> None:
+        observed = []
+        self.uploader.on_call = lambda: observed.append(self.pending_store.value)
+
+        self.workflow.upload(
+            AssetSourceMode.GITHUB,
+            self.options,
+            "note",
+            SESSION,
+        )
+
+        self.assertEqual(observed[0].phase, PendingPhase.STEAM_STARTED)
+        self.assertEqual(observed[0].workshop_id, self.options.workshop_id)
+        self.assertIsNone(observed[0].steam_succeeded_at)
+
     def test_github_success_uses_identical_normalized_note(self) -> None:
         self.workflow.upload(
             AssetSourceMode.GITHUB,
@@ -186,5 +214,102 @@ class UploadWorkflowTests(unittest.TestCase):
         self.assertFalse(self.pending_store.exists())
 
 
+    def test_retry_after_commit_crash_does_not_create_duplicate_commit(self) -> None:
+        self.repository.current_head = "b" * 40
+        self.repository.pending_commits = True
+        self.repository.current_head_message = "Update asset"
+        self.pending_store.value = PendingUpload(
+            schema_version=2,
+            phase=PendingPhase.STEAM_SUCCEEDED,
+            workshop_id=1234567890,
+            note="Update asset",
+            steam_succeeded_at="2026-07-18T12:00:00Z",
+            base_commit="a" * 40,
+            commit_id=None,
+        )
+
+        self.workflow.retry_pending_push(SESSION)
+
+        self.assertEqual(self.repository.commit_calls, [])
+        self.assertEqual(self.repository.push_count, 1)
+        self.assertFalse(self.pending_store.exists())
+
+    def test_preexisting_pending_commits_do_not_skip_asset_commit(self) -> None:
+        self.repository.current_head = "a" * 40
+        self.repository.current_head_message = "older local commit"
+        self.repository.pending_commits = True
+        self.pending_store.value = PendingUpload(
+            schema_version=2,
+            phase=PendingPhase.STEAM_SUCCEEDED,
+            workshop_id=1234567890,
+            note="Update asset",
+            steam_succeeded_at="2026-07-18T12:00:00Z",
+            base_commit="a" * 40,
+            commit_id=None,
+        )
+
+        self.workflow.retry_pending_push(SESSION)
+
+        self.assertEqual(len(self.repository.commit_calls), 1)
+        self.assertEqual(self.repository.push_count, 1)
+        self.assertFalse(self.pending_store.exists())
+
+
+    def test_ambiguous_steam_result_blocks_automatic_retry(self) -> None:
+        self.pending_store.value = PendingUpload(
+            schema_version=2,
+            phase=PendingPhase.STEAM_STARTED,
+            workshop_id=1234567890,
+            note="Update asset",
+            steam_succeeded_at=None,
+            base_commit="a" * 40,
+            commit_id=None,
+        )
+
+        with self.assertRaisesRegex(WorkflowBlocked, "Steam"):
+            self.workflow.retry_pending_push(SESSION)
+
+        self.assertEqual(self.repository.commit_calls, [])
+        self.assertEqual(self.repository.push_count, 0)
+        self.assertTrue(self.pending_store.exists())
+
+    def test_confirmed_steam_success_continues_with_git_only(self) -> None:
+        self.pending_store.value = PendingUpload(
+            schema_version=2,
+            phase=PendingPhase.STEAM_STARTED,
+            workshop_id=0,
+            note="Update asset",
+            steam_succeeded_at=None,
+            base_commit="a" * 40,
+            commit_id=None,
+        )
+
+        resolved = self.workflow.resolve_ambiguous_steam(True, 987654321)
+        self.assertEqual(resolved.phase, PendingPhase.STEAM_SUCCEEDED)
+        self.assertEqual(resolved.workshop_id, 987654321)
+
+        self.workflow.retry_pending_push(SESSION)
+
+        self.assertEqual(len(self.uploader.calls), 0)
+        self.assertEqual(len(self.repository.commit_calls), 1)
+        self.assertEqual(self.repository.push_count, 1)
+        self.assertFalse(self.pending_store.exists())
+
+    def test_confirmed_steam_failure_clears_ambiguous_record(self) -> None:
+        self.pending_store.value = PendingUpload(
+            schema_version=2,
+            phase=PendingPhase.STEAM_STARTED,
+            workshop_id=1234567890,
+            note="Update asset",
+            steam_succeeded_at=None,
+            base_commit="a" * 40,
+            commit_id=None,
+        )
+
+        resolved = self.workflow.resolve_ambiguous_steam(False)
+
+        self.assertIsNone(resolved)
+        self.assertFalse(self.pending_store.exists())
 if __name__ == "__main__":
+
     unittest.main()

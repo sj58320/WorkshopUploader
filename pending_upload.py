@@ -3,18 +3,25 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass
+from enum import Enum
 from pathlib import Path
 
 
-PENDING_SCHEMA_VERSION = 1
+PENDING_SCHEMA_VERSION = 2
+
+
+class PendingPhase(str, Enum):
+    STEAM_STARTED = "steam_started"
+    STEAM_SUCCEEDED = "steam_succeeded"
 
 
 @dataclass(frozen=True)
 class PendingUpload:
     schema_version: int
+    phase: PendingPhase
     workshop_id: int
     note: str
-    steam_succeeded_at: str
+    steam_succeeded_at: str | None
     base_commit: str
     commit_id: str | None
 
@@ -45,6 +52,7 @@ class PendingUploadStore:
             return None
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
+            payload["phase"] = PendingPhase(payload.get("phase"))
             pending = PendingUpload(**payload)
             self._validate(pending)
             return pending
@@ -59,14 +67,12 @@ class PendingUploadStore:
 
     @staticmethod
     def _validate(pending: PendingUpload) -> None:
-        valid = (
+        common_valid = (
             pending.schema_version == PENDING_SCHEMA_VERSION
+            and isinstance(pending.phase, PendingPhase)
             and isinstance(pending.workshop_id, int)
-            and pending.workshop_id > 0
             and isinstance(pending.note, str)
             and bool(pending.note)
-            and isinstance(pending.steam_succeeded_at, str)
-            and bool(pending.steam_succeeded_at)
             and isinstance(pending.base_commit, str)
             and bool(pending.base_commit)
             and (
@@ -74,6 +80,19 @@ class PendingUploadStore:
                 or (isinstance(pending.commit_id, str) and bool(pending.commit_id))
             )
         )
+        if pending.phase is PendingPhase.STEAM_STARTED:
+            phase_valid = (
+                pending.workshop_id >= 0
+                and pending.steam_succeeded_at is None
+                and pending.commit_id is None
+            )
+        else:
+            phase_valid = (
+                pending.workshop_id > 0
+                and isinstance(pending.steam_succeeded_at, str)
+                and bool(pending.steam_succeeded_at)
+            )
+        valid = common_valid and phase_valid
         if not valid:
             raise PendingUploadError("GitHub push 복구 정보가 올바르지 않습니다.")
 

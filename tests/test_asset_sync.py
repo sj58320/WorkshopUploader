@@ -85,6 +85,30 @@ class AssetRepositoryIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(run_git(self.local, "branch", "--show-current"), "main")
 
+
+    def test_modified_push_url_is_rejected(self) -> None:
+        self.repository.prepare()
+        unexpected_remote = self.root / "unexpected.git"
+        unexpected_remote.mkdir()
+        run_git(unexpected_remote, "init", "--bare")
+        run_git(
+            self.local, "remote", "set-url", "--push", "origin",
+            unexpected_remote.as_uri(),
+        )
+
+        result = self.repository.prepare()
+        self.assertEqual(result.state, SyncState.ERROR)
+
+    def test_commit_rechecks_main_branch(self) -> None:
+        self.repository.prepare()
+        run_git(self.local, "checkout", "-b", "unexpected")
+        (self.repository.asset_folder / "base.txt").write_text(
+            "changed", encoding="utf-8"
+        )
+
+        with self.assertRaises(RuntimeError):
+            self.repository.commit(
+                "must stay on main", GitHubUser("user", 1, None))
     def test_second_sync_fast_forwards_remote_change(self) -> None:
         self.repository.prepare()
         old_head = run_git(self.local, "rev-parse", "HEAD")
@@ -132,6 +156,24 @@ class AssetRepositoryIntegrationTests(unittest.TestCase):
         self.assertNotEqual(empty_commit, first_commit)
         self.assertEqual(run_git(self.local, "show", "-s", "--format=%B", empty_commit),
                          "Update asset")
+
+    def test_commit_excludes_staged_files_outside_asset_folder(self) -> None:
+        self.repository.prepare()
+        outside = self.local / "README.md"
+        outside.write_text("do not commit", encoding="utf-8")
+        run_git(self.local, "add", "README.md")
+        (self.repository.asset_folder / "base.txt").write_text(
+            "changed", encoding="utf-8"
+        )
+
+        commit_id = self.repository.commit(
+            "asset only", GitHubUser("asset-user", 123, None)
+        )
+
+        committed = run_git(self.local, "show", "--format=", "--name-only", commit_id)
+        self.assertIn("in/additional_files/base.txt", committed.splitlines())
+        self.assertNotIn("README.md", committed.splitlines())
+        self.assertIn("A  README.md", run_git(self.local, "status", "--short"))
 
 
 if __name__ == "__main__":

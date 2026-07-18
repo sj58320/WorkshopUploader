@@ -23,6 +23,14 @@ class FakeWorkshop:
 
 
 class WorkshopMetadataTests(unittest.TestCase):
+    def test_cli_accepts_multiline_change_note(self) -> None:
+        with patch(
+            "sys.argv",
+            ["asset_upload.py", "1234567890", "--change-note", "fix\nmodels"],
+        ):
+            arguments = asset_upload.parse_args()
+
+        self.assertEqual(arguments.change_note, "fix\nmodels")
     def test_default_addon_id_is_blank(self) -> None:
         self.assertEqual(workshop_uploader_gui.DEFAULT_WORKSHOP_ID, "")
 

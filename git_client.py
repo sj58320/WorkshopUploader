@@ -86,9 +86,13 @@ class GitRunner:
         environment.update(
             {
                 "GIT_TERMINAL_PROMPT": "0",
-                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": "NUL" if os.name == "nt" else "/dev/null",
+                "GIT_CONFIG_COUNT": "2",
                 "GIT_CONFIG_KEY_0": "credential.helper",
                 "GIT_CONFIG_VALUE_0": "",
+                "GIT_CONFIG_KEY_1": "http.sslVerify",
+                "GIT_CONFIG_VALUE_1": "true",
             }
         )
         if credential is not None:

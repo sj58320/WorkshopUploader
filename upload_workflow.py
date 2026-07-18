@@ -9,7 +9,12 @@ from app_settings import AssetSourceMode
 from asset_sync import AssetRepository, SyncResult, SyncState
 from asset_upload import UploadResult, auto_update
 from github_auth import GitHubSession
-from pending_upload import PendingUpload, PendingUploadStore
+from pending_upload import (
+    PENDING_SCHEMA_VERSION,
+    PendingPhase,
+    PendingUpload,
+    PendingUploadStore,
+)
 from update_notes import normalize_update_note
 
 
@@ -148,20 +153,32 @@ class UploadWorkflow:
             raise WorkflowBlocked("GitHub push 복구 저장소가 구성되지 않았습니다.")
         repository, sync = self._ready_repository(session)
         base_commit = repository.head()
-        result = self.local_uploader(
-            options.workshop_id,
-            options.chunk_size_mb,
-            False,
-            **options.uploader_kwargs(repository.asset_folder),
-            change_note=note,
-        )
         pending = PendingUpload(
-            schema_version=1,
-            workshop_id=result.workshop_id,
+            schema_version=PENDING_SCHEMA_VERSION,
+            phase=PendingPhase.STEAM_STARTED,
+            workshop_id=options.workshop_id,
             note=note,
-            steam_succeeded_at=self.clock(),
+            steam_succeeded_at=None,
             base_commit=base_commit,
             commit_id=None,
+        )
+        self.pending_store.save(pending)
+        try:
+            result = self.local_uploader(
+                options.workshop_id,
+                options.chunk_size_mb,
+                False,
+                **options.uploader_kwargs(repository.asset_folder),
+                change_note=note,
+            )
+        except Exception:
+            self.pending_store.clear()
+            raise
+        pending = replace(
+            pending,
+            phase=PendingPhase.STEAM_SUCCEEDED,
+            workshop_id=result.workshop_id,
+            steam_succeeded_at=self.clock(),
         )
         self.pending_store.save(pending)
         commit_id = repository.commit(note, session.user)
@@ -176,6 +193,37 @@ class UploadWorkflow:
             "Steam 업로드 및 GitHub push 완료",
         )
 
+
+    def resolve_ambiguous_steam(
+        self,
+        succeeded: bool,
+        workshop_id: int | None = None,
+    ) -> PendingUpload | None:
+        if self.pending_store is None:
+            raise WorkflowBlocked("GitHub push 복구 저장소가 구성되지 않았습니다.")
+        pending = self.pending_store.load()
+        if pending is None:
+            raise WorkflowBlocked("확인할 Steam 업로드 기록이 없습니다.")
+        if pending.phase is not PendingPhase.STEAM_STARTED:
+            raise WorkflowBlocked("Steam 결과 확인이 필요한 기록이 아닙니다.")
+        if not succeeded:
+            self.pending_store.clear()
+            return None
+        confirmed_id = pending.workshop_id if workshop_id is None else workshop_id
+        if (
+            not isinstance(confirmed_id, int)
+            or isinstance(confirmed_id, bool)
+            or confirmed_id <= 0
+        ):
+            raise WorkflowBlocked("성공한 Steam Workshop Addon ID가 필요합니다.")
+        pending = replace(
+            pending,
+            phase=PendingPhase.STEAM_SUCCEEDED,
+            workshop_id=confirmed_id,
+            steam_succeeded_at=self.clock(),
+        )
+        self.pending_store.save(pending)
+        return pending
     def retry_pending_push(
         self,
         session: GitHubSession | None,
@@ -185,9 +233,24 @@ class UploadWorkflow:
         pending = self.pending_store.load()
         if pending is None:
             raise WorkflowBlocked("재시도할 GitHub push가 없습니다.")
-        repository, sync = self._ready_repository(session)
+        if pending.phase is PendingPhase.STEAM_STARTED:
+            raise WorkflowBlocked(
+                "Steam 업로드 결과를 확인할 수 없어 자동 재시도를 중단했습니다."
+            )
+        repository = self._repository(session)
+        commit_already_created = (
+            pending.commit_id is None
+            and repository.head() != pending.base_commit
+            and repository.head_message() == pending.note
+        )
+        sync = repository.prepare()
+        if sync.state is not SyncState.READY:
+            raise WorkflowBlocked(sync.message, sync)
         if pending.commit_id is None:
-            commit_id = repository.commit(pending.note, session.user)
+            if commit_already_created:
+                commit_id = repository.head()
+            else:
+                commit_id = repository.commit(pending.note, session.user)
             pending = replace(pending, commit_id=commit_id)
             self.pending_store.save(pending)
         repository.push()

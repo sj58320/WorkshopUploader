@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 build/
 dist/
+.vendor/
 
 /in/additional_files/*
 !/in/additional_files/.gitkeep

@@ -10,7 +10,7 @@ import webbrowser
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 import app_settings
 import asset_upload
@@ -20,7 +20,7 @@ from git_client import GitRunner, ensure_askpass
 from github_auth import DeviceCode, GitHubApiClient, GitHubAuthManager, GitHubSession
 from github_config import GitHubConfigError, load_github_app_config
 from gui_state import compute_action_availability
-from pending_upload import PendingUploadStore
+from pending_upload import PendingPhase, PendingUploadError, PendingUploadStore
 from update_notes import UPDATE_NOTE_PLACEHOLDER
 from upload_workflow import UploadOptions, UploadWorkflow, WorkflowResult
 from windows_credentials import WindowsCredentialStore
@@ -510,6 +510,15 @@ class WorkshopUploaderApp:
         except ValueError:
             return None
 
+
+    def _pending_steam_result_unknown(self) -> bool:
+        if not self.pending_store.exists():
+            return False
+        try:
+            pending = self.pending_store.load()
+        except PendingUploadError:
+            return False
+        return pending is not None and pending.phase is PendingPhase.STEAM_STARTED
     def _prompt_initial_mode(self) -> None:
         answer = messagebox.askyesnocancel(
             APP_TITLE,
@@ -561,7 +570,11 @@ class WorkshopUploaderApp:
             self.asset_path_entry.configure(textvariable=self.github_asset_folder)
             if self.pending_store.exists():
                 self.sync_state = SyncState.PUSH_PENDING
-                self.github_status.set("Steam 업로드 완료 · GitHub push 재시도 필요")
+                self.github_status.set(
+                    "Steam 업로드 결과 확인 필요"
+                    if self._pending_steam_result_unknown()
+                    else "Steam 업로드 완료 · GitHub push 재시도 필요"
+                )
             else:
                 self.sync_state = SyncState.LOGIN_REQUIRED
                 self.github_status.set("GitHub 인증과 동기화를 확인하는 중...")
@@ -761,12 +774,54 @@ class WorkshopUploaderApp:
 
     def _github_action(self) -> None:
         if self.pending_store.exists():
-            self._start_pending_retry()
+            if self._pending_steam_result_unknown():
+                self._resolve_pending_steam_result()
+            else:
+                self._start_pending_retry()
         elif self.sync_state is SyncState.LOGIN_REQUIRED:
             self._start_github_prepare(login=True)
         else:
             self._start_github_prepare(login=False)
 
+
+    def _resolve_pending_steam_result(self) -> None:
+        answer = messagebox.askyesnocancel(
+            APP_TITLE,
+            (
+                "Steam Workshop 페이지에서 마지막 업로드 결과를 확인하세요.\n\n"
+                "성공했으면 '예', 실패했으면 '아니요'를 선택하세요."
+            ),
+            icon="warning",
+            parent=self.root,
+        )
+        if answer is None:
+            return
+        try:
+            if not answer:
+                self.workflow.resolve_ambiguous_steam(False)
+                self.sync_state = SyncState.LOGIN_REQUIRED
+                self.github_status.set("Steam 실패 확인 · 다시 업로드할 수 있습니다.")
+                self._start_github_prepare(login=False)
+                return
+            pending = self.pending_store.load()
+            if pending is None:
+                raise RuntimeError("확인할 Steam 업로드 기록이 없습니다.")
+            workshop_id = pending.workshop_id
+            if workshop_id <= 0:
+                workshop_id = simpledialog.askinteger(
+                    APP_TITLE,
+                    "성공한 새 Workshop 항목의 Addon ID를 입력하세요.",
+                    minvalue=1,
+                    parent=self.root,
+                )
+                if workshop_id is None:
+                    return
+            resolved = self.workflow.resolve_ambiguous_steam(True, workshop_id)
+        except Exception as error:
+            messagebox.showerror(APP_TITLE, str(error), parent=self.root)
+            return
+        self.workshop_id.set(str(resolved.workshop_id))
+        self._start_pending_retry()
     def _start_pending_retry(self) -> None:
         if self.running:
             return
@@ -778,7 +833,11 @@ class WorkshopUploaderApp:
             self._ensure_github_services()
             session = self.session or self.auth_manager.get_valid_session()
             if session is None:
-                raise RuntimeError("GitHub 로그인이 필요합니다.")
+                self.cancel_login.clear()
+                session = self.auth_manager.login(
+                    lambda code: self.events.put(("device_code", code)),
+                    self.cancel_login.is_set,
+                )
             result = self.workflow.retry_pending_push(session)
             self.events.put(("push_done", (session, result)))
         except Exception as error:
@@ -901,7 +960,9 @@ class WorkshopUploaderApp:
                     if self.pending_store.exists():
                         self.sync_state = SyncState.PUSH_PENDING
                         self.github_status.set(
-                            "Steam 업로드 완료 · GitHub push 재시도 필요"
+                            "Steam 업로드 결과 확인 필요"
+                            if self._pending_steam_result_unknown()
+                            else "Steam 업로드 완료 · GitHub push 재시도 필요"
                         )
                     self._set_running(False)
                     messagebox.showerror(
@@ -918,6 +979,8 @@ class WorkshopUploaderApp:
                     self.github_status.set(
                         f"최신 상태 · 로그인: {self.session.user.login}"
                     )
+                    if result.workshop_id is not None:
+                        self.workshop_id.set(str(result.workshop_id))
                     self._clear_update_note()
                     self._set_running(False)
                     messagebox.showinfo(APP_TITLE, result.message, parent=self.root)
@@ -1027,7 +1090,11 @@ class WorkshopUploaderApp:
                 state="disabled" if self.running else "normal"
             )
             if availability.retry_push_enabled:
-                self.github_action_button.configure(text="GitHub Push 재시도")
+                self.github_action_button.configure(
+                    text="Steam 결과 확인 필요"
+                    if self._pending_steam_result_unknown()
+                    else "GitHub Push 재시도"
+                )
             elif self.sync_state is SyncState.LOGIN_REQUIRED:
                 self.github_action_button.configure(text="GitHub 로그인")
             else:
