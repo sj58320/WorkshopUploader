@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-import json
 import os
 import queue
 import sys
@@ -13,19 +12,12 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import asset_upload
+import app_settings
 
 
 APP_TITLE = "CS2 Workshop Uploader"
 DEFAULT_WORKSHOP_ID = ""
 SETTINGS_PATH = asset_upload.RUNTIME_PATH / "settings.json"
-SETTINGS_KEYS = (
-    "workshop_id",
-    "workshop_title",
-    "workshop_description",
-    "chunk_size_mb",
-    "asset_folder",
-    "output_folder",
-)
 
 BG = "#F3F5F8"
 CARD = "#FFFFFF"
@@ -46,27 +38,11 @@ FONT_SMALL = (FONT_FAMILY, 9)
 
 
 def load_settings(path: Path = SETTINGS_PATH) -> dict[str, str]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {
-        key: value
-        for key in SETTINGS_KEYS
-        if isinstance((value := data.get(key)), str)
-    }
+    return app_settings.load_settings(path)
 
 
 def save_settings(settings: dict[str, str], path: Path = SETTINGS_PATH) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = path.with_suffix(path.suffix + ".tmp")
-    temporary_path.write_text(
-        json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    temporary_path.replace(path)
+    app_settings.save_settings(path, settings)
 
 
 class QueueWriter:
