@@ -28,6 +28,14 @@ class GitHubCredential:
 class CredentialStoreError(RuntimeError):
     pass
 
+class CredentialStore(Protocol):
+    def load(self) -> GitHubCredential | None: ...
+
+    def save(self, credential: GitHubCredential) -> None: ...
+
+    def delete(self) -> None: ...
+
+
 
 class CredentialApi(Protocol):
     def write_generic(self, target_name: str, blob: bytes) -> None: ...
