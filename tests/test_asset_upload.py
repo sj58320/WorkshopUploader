@@ -36,7 +36,7 @@ class WorkshopMetadataTests(unittest.TestCase):
                 patch.object(asset_upload, "create_publish_data") as publish_data,
                 patch.object(asset_upload, "sleep"),
             ):
-                pack_folder = asset_upload.auto_update(
+                result = asset_upload.auto_update(
                     1234567890,
                     100,
                     False,
@@ -46,7 +46,7 @@ class WorkshopMetadataTests(unittest.TestCase):
                 )
 
         self.assertEqual(fake.update_calls[0][2:4], (None, None))
-        publish_data.assert_called_once_with("Workshop 1234567890", pack_folder)
+        publish_data.assert_called_once_with("Workshop 1234567890", result.pack_folder)
 
     def test_metadata_is_trimmed_and_forwarded(self) -> None:
         fake = FakeWorkshop()
@@ -58,7 +58,7 @@ class WorkshopMetadataTests(unittest.TestCase):
                 patch.object(asset_upload, "create_publish_data") as publish_data,
                 patch.object(asset_upload, "sleep"),
             ):
-                pack_folder = asset_upload.auto_update(
+                result = asset_upload.auto_update(
                     1234567890,
                     100,
                     False,
@@ -73,7 +73,31 @@ class WorkshopMetadataTests(unittest.TestCase):
             fake.update_calls[0][2:4],
             ("Public title", "Public description"),
         )
-        publish_data.assert_called_once_with("Public title", pack_folder)
+        publish_data.assert_called_once_with("Public title", result.pack_folder)
+
+    def test_multiline_change_note_and_confirmed_id_are_returned(self) -> None:
+        fake = FakeWorkshop()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            with (
+                patch.object(asset_upload, "load_workshop_module", return_value=fake),
+                patch.object(asset_upload, "pack_content"),
+                patch.object(asset_upload, "create_publish_data"),
+                patch.object(asset_upload, "sleep"),
+            ):
+                result = asset_upload.auto_update(
+                    1234567890,
+                    100,
+                    False,
+                    asset_folder=root / "assets",
+                    output_folder=root / "output",
+                    isolated_output=True,
+                    change_note="add models\nfix materials",
+                )
+
+        self.assertEqual(fake.update_calls[0][1], "add models\nfix materials")
+        self.assertEqual(result.workshop_id, 1234567890)
+        self.assertTrue(result.steam_submitted)
 
     def test_new_item_requires_title_before_loading_steam(self) -> None:
         load_workshop = Mock()
@@ -92,7 +116,7 @@ class WorkshopMetadataTests(unittest.TestCase):
                 patch.object(asset_upload, "create_publish_data") as publish_data,
                 patch.object(asset_upload, "sleep"),
             ):
-                pack_folder = asset_upload.auto_update(
+                result = asset_upload.auto_update(
                     0,
                     100,
                     False,
@@ -103,10 +127,10 @@ class WorkshopMetadataTests(unittest.TestCase):
                     workshop_description="New description",
                 )
 
-        self.assertEqual(pack_folder.name, "Workshop_987654321")
+        self.assertEqual(result.pack_folder.name, "Workshop_987654321")
         self.assertEqual(fake.update_calls[0][0], 987654321)
         self.assertEqual(fake.update_calls[0][2:4], ("New title", "New description"))
-        publish_data.assert_called_once_with("New title", pack_folder)
+        publish_data.assert_called_once_with("New title", result.pack_folder)
 
 
 class SettingsPersistenceTests(unittest.TestCase):

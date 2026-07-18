@@ -7,10 +7,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from time import sleep, strftime, time
 
 from scripts.cs2_vpk import finalize_cs2_workshop_vpk
+from update_notes import normalize_update_note
 
 
 SOURCE_PATH = Path(__file__).resolve().parent
@@ -37,6 +39,14 @@ ADDITIONAL_FOLDER = INPUT_PATH / "additional_files"
 
 DEFAULT_CHUNK_SIZE_MB = 100
 INVALID_WORKSHOP_IDS = (0, -1)
+
+
+@dataclass(frozen=True)
+class UploadResult:
+    pack_folder: Path
+    workshop_id: int
+    steam_submitted: bool
+
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,6 +81,10 @@ def parse_args() -> argparse.Namespace:
         help="Workshop description. Omit it to preserve an existing description.",
     )
     args = parser.parse_args()
+    parser.add_argument(
+        "--change-note",
+        help="Steam Workshop update note. Blank input defaults to 'Update asset'.",
+    )
     if args.workshop_id < 0:
         parser.error("workshop_id must be 0 or a positive integer")
     if args.chunk_size_mb < 1:
@@ -259,9 +273,10 @@ def auto_update(
     preview_path: Path | str | None = None,
     workshop_title: str | None = None,
     workshop_description: str | None = None,
-) -> Path:
+    change_note: str | None = None,
+) -> UploadResult:
     logging.info("Start upload asset")
-    changelog = "Update asset"
+    changelog = normalize_update_note(change_note)
 
     title = workshop_title.strip() if workshop_title else None
     description = workshop_description.strip() if workshop_description else None
@@ -311,7 +326,7 @@ def auto_update(
 
     if pack_only:
         print(f"Pack-only mode complete. Output: {pack_folder}")
-        return pack_folder
+        return UploadResult(pack_folder, workshop_id, False)
 
     if workshop is None:
         workshop = load_workshop_module()
@@ -350,7 +365,7 @@ def auto_update(
 
     logging.info("Complete update Asset")
     print(f"Steam 확인 완료: Workshop item '{workshop_id}' updated successfully.")
-    return pack_folder
+    return UploadResult(pack_folder, workshop_id, True)
 
 
 if getattr(sys, "frozen", False):
@@ -375,6 +390,7 @@ if __name__ == "__main__":
             arguments.pack_only,
             workshop_title=arguments.title,
             workshop_description=arguments.description,
+            change_note=arguments.change_note,
         )
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
         logging.exception("Asset update failed")
