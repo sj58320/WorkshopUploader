@@ -4,7 +4,7 @@ EXE 하나로 CS2 에셋을 멀티청크 VPK로 만들고 Steam 창작마당에 
 
 ## 다운로드
 
-[Releases](https://github.com/sj58320/WorkshopUploader/releases)에서 `WorkshopUploader-v0.1.0.exe`만 받아 실행하면 됩니다. Python, VPKEdit CLI, SteamworksPy와 필요한 DLL은 EXE 안에 포함되어 있습니다. 실제 에셋 파일은 포함되지 않으며 사용자가 폴더를 선택해야 합니다.
+[Releases](https://github.com/sj58320/WorkshopUploader/releases)에서 `WorkshopUploader-v0.1.1.exe`만 받아 실행하면 됩니다. Python, VPKEdit CLI, SteamworksPy와 필요한 DLL은 EXE 안에 포함되어 있습니다. 실제 에셋 파일은 포함되지 않으며 사용자가 폴더를 선택해야 합니다.
 
 개인 빌드라 코드 서명이 없으므로 Windows SmartScreen 경고가 표시될 수 있습니다.
 
@@ -119,7 +119,7 @@ python .\asset_upload.py 0 --title "새 애드온" --description "애드온 설�
 
 ## 릴리스와 소스 코드 파일
 
-릴리스에서 직접 사용하는 첨부 파일은 `WorkshopUploader-v0.1.0.exe` 하나입니다. GitHub가 모든 릴리스에 자동으로 붙이는 `Source code (zip)`과 `Source code (tar.gz)`는 저장소 전체의 스냅샷이라 삭제할 수 없습니다.
+릴리스에서 직접 사용하는 첨부 파일은 `WorkshopUploader-v0.1.1.exe` 하나입니다. GitHub가 모든 릴리스에 자동으로 붙이는 `Source code (zip)`과 `Source code (tar.gz)`는 저장소 전체의 스냅샷이라 삭제할 수 없습니다.
 
 소스 저장소에는 현재 GUI, CLI, GitHub 동기화, 빌드와 테스트에 필요한 파일만 포함합니다. 생성된 VPK, 사용자 설정, 로그인 토큰, 내려받은 MinGit, 구형 RSS 서버 자동화 스크립트와 CS2MapPacker 런타임은 포함하지 않습니다.
 
@@ -134,9 +134,9 @@ python .\asset_upload.py 0 --title "새 애드온" --description "애드온 설�
 ```powershell
 python -m pip install -r requirements-build.txt
 $env:WORKSHOP_UPLOADER_GITHUB_CLIENT_ID = "GitHub App client ID"
-powershell -ExecutionPolicy Bypass -File .\scripts\build_release.ps1 -Version v0.1.0
+powershell -ExecutionPolicy Bypass -File .\scripts\build_release.ps1 -Version v0.1.1
 ```
 
-빌드 스크립트는 공식 MinGit 2.55.0.3 압축 파일을 내려받아 고정된 SHA-256을 확인하고 EXE 안에 포함합니다. 결과물은 `dist/WorkshopUploader-v0.1.0.exe` 하나이며 실제 에셋이나 생성된 VPK는 포함하지 않습니다.
+빌드 스크립트는 공식 MinGit 2.55.0.3 압축 파일을 내려받아 고정된 SHA-256을 확인하고 EXE 안에 포함합니다. 결과물은 `dist/WorkshopUploader-v0.1.1.exe` 하나이며 실제 에셋이나 생성된 VPK는 포함하지 않습니다.
 
 서드파티 구성요소와 라이선스는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 확인하세요.
