@@ -56,6 +56,33 @@ class WorkshopMetadataTests(unittest.TestCase):
         self.assertEqual(fake.update_calls[0][2:4], (None, None))
         publish_data.assert_called_once_with("Workshop 1234567890", result.pack_folder)
 
+    def test_preview_image_is_forwarded_to_workshop_update(self) -> None:
+        fake = FakeWorkshop()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            preview = root / "rss_banner.png"
+            preview.write_bytes(b"preview")
+            with (
+                patch.object(asset_upload, "load_workshop_module", return_value=fake),
+                patch.object(asset_upload, "pack_content"),
+                patch.object(asset_upload, "create_publish_data"),
+                patch.object(asset_upload, "sleep"),
+            ):
+                asset_upload.auto_update(
+                    1234567890,
+                    100,
+                    False,
+                    asset_folder=root / "assets",
+                    output_folder=root / "output",
+                    isolated_output=True,
+                    preview_path=preview,
+                )
+
+        self.assertEqual(
+            Path(fake.update_calls[0][4]),
+            preview.resolve(),
+        )
+
     def test_metadata_is_trimmed_and_forwarded(self) -> None:
         fake = FakeWorkshop()
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -150,6 +177,7 @@ class SettingsPersistenceTests(unittest.TestCase):
             "chunk_size_mb": "100",
             "asset_folder": r"D:\CS2\Assets",
             "output_folder": r"D:\CS2\Output",
+            "preview_path": r"D:\CS2\rss_banner.png",
         }
         with tempfile.TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "settings.json"
@@ -169,6 +197,7 @@ class SettingsPersistenceTests(unittest.TestCase):
             "chunk_size_mb": "100",
             "asset_folder": r"D:\CS2\Assets",
             "output_folder": r"D:\CS2\Output",
+            "preview_path": r"D:\CS2\rss_banner.png",
         }
         app.workshop_id = Mock(**{"get.return_value": values["workshop_id"]})
         app.workshop_title = Mock(
@@ -180,12 +209,37 @@ class SettingsPersistenceTests(unittest.TestCase):
         app.chunk_size = Mock(**{"get.return_value": values["chunk_size_mb"]})
         app.asset_folder = Mock(**{"get.return_value": values["asset_folder"]})
         app.output_folder = Mock(**{"get.return_value": values["output_folder"]})
+        app.preview_path = Mock(**{"get.return_value": values["preview_path"]})
 
         with patch.object(workshop_uploader_gui, "save_settings") as save:
             app._on_close()
 
         save.assert_called_once_with(values)
         app.root.destroy.assert_called_once_with()
+
+    def test_parse_options_forwards_selected_preview_image(self) -> None:
+        app = object.__new__(workshop_uploader_gui.WorkshopUploaderApp)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            assets = root / "assets"
+            assets.mkdir()
+            preview = root / "rss_banner.png"
+            preview.write_bytes(b"preview")
+
+            app.workshop_id = Mock(**{"get.return_value": "1234567890"})
+            app.workshop_title = Mock(**{"get.return_value": "Title"})
+            app.workshop_description = Mock(**{"get.return_value": "Description"})
+            app.chunk_size = Mock(**{"get.return_value": "100"})
+            app.asset_folder = Mock(**{"get.return_value": str(assets)})
+            app.output_folder = Mock(**{"get.return_value": str(root / "output")})
+            app.preview_path = Mock(**{"get.return_value": str(preview)})
+            app.asset_source_mode = Mock(
+                **{"get.return_value": workshop_uploader_gui.AssetSourceMode.LOCAL.value}
+            )
+
+            options = app._parse_options()
+
+        self.assertEqual(options.preview_path, preview.resolve())
 
     def test_close_while_running_does_not_save(self) -> None:
         app = object.__new__(workshop_uploader_gui.WorkshopUploaderApp)

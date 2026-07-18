@@ -36,6 +36,7 @@ class AppSettingsTests(unittest.TestCase):
                 {
                     "asset_source_mode": "local",
                     "asset_folder": r"D:\assets",
+                    "preview_path": r"D:\rss_banner.png",
                     "update_note": "do not save",
                     "unknown": "do not save",
                 },
@@ -44,7 +45,11 @@ class AppSettingsTests(unittest.TestCase):
 
         self.assertEqual(
             raw,
-            {"asset_source_mode": "local", "asset_folder": r"D:\assets"},
+            {
+                "asset_source_mode": "local",
+                "asset_folder": r"D:\assets",
+                "preview_path": r"D:\rss_banner.png",
+            },
         )
 
     def test_non_string_and_invalid_json_values_are_ignored(self) -> None:

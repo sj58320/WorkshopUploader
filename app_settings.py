@@ -19,6 +19,7 @@ PERSISTED_KEYS = (
     "chunk_size_mb",
     "asset_folder",
     "output_folder",
+    "preview_path",
     "asset_source_mode",
 )
 

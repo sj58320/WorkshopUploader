@@ -110,6 +110,7 @@ class WorkshopUploaderApp:
                 "output_folder", str(asset_upload.RUNTIME_PATH / "output")
             )
         )
+        self.preview_path = tk.StringVar(value=saved.get("preview_path", ""))
         self.status = tk.StringVar(value="준비됨")
         self.github_status = tk.StringVar(value="GitHub 로그인 필요")
         self.note_placeholder_active = False
@@ -126,8 +127,8 @@ class WorkshopUploaderApp:
 
     def _configure_window(self) -> None:
         self.root.title(APP_TITLE)
-        self.root.geometry("940x980")
-        self.root.minsize(850, 900)
+        self.root.geometry("940x1020")
+        self.root.minsize(850, 940)
         self.root.configure(bg=BG)
         style = ttk.Style(self.root)
         style.theme_use("clam")
@@ -157,6 +158,7 @@ class WorkshopUploaderApp:
             "chunk_size_mb": self.chunk_size.get(),
             "asset_folder": self.asset_folder.get(),
             "output_folder": self.output_folder.get(),
+            "preview_path": self.preview_path.get(),
         }
         mode = getattr(self, "asset_source_mode", None)
         if mode is not None and mode.get() in {
@@ -358,7 +360,24 @@ class WorkshopUploaderApp:
             row=6, column=4, sticky="e", padx=(0, 18), pady=(0, 12)
         )
 
-        self._label(settings, "업데이트 내역", 7, anchor="nw")
+        self._label(settings, "\ubbf8\ub9ac\ubcf4\uae30 \uc774\ubbf8\uc9c0", 7)
+        self.preview_path_entry = ttk.Entry(
+            settings,
+            textvariable=self.preview_path,
+            style="Uploader.TEntry",
+            font=FONT_BODY,
+        )
+        self.preview_path_entry.grid(
+            row=7, column=1, columnspan=3, sticky="ew", padx=(0, 8), pady=(0, 12)
+        )
+        self.preview_browse_button = self._button(
+            settings, "\ucc3e\uc544\ubcf4\uae30", self._choose_preview_image, secondary=True
+        )
+        self.preview_browse_button.grid(
+            row=7, column=4, sticky="e", padx=(0, 18), pady=(0, 12)
+        )
+
+        self._label(settings, "업데이트 내역", 8, anchor="nw")
         self.update_note = tk.Text(
             settings,
             height=4,
@@ -375,7 +394,7 @@ class WorkshopUploaderApp:
             font=FONT_BODY,
         )
         self.update_note.grid(
-            row=7, column=1, columnspan=4, sticky="ew", padx=(0, 18), pady=(0, 14)
+            row=8, column=1, columnspan=4, sticky="ew", padx=(0, 18), pady=(0, 14)
         )
         self.update_note.bind("<FocusIn>", self._on_note_focus_in)
         self.update_note.bind("<FocusOut>", self._on_note_focus_out)
@@ -629,6 +648,30 @@ class WorkshopUploaderApp:
         if selected:
             self.output_folder.set(selected)
 
+    def _choose_preview_image(self) -> None:
+        current_value = self.preview_path.get().strip()
+        current = (
+            Path(os.path.expandvars(current_value)).expanduser()
+            if current_value
+            else None
+        )
+        initial_directory = (
+            current.parent
+            if current is not None and current.is_file()
+            else Path.home()
+        )
+        selected = filedialog.askopenfilename(
+            title="Workshop \ubbf8\ub9ac\ubcf4\uae30 \uc774\ubbf8\uc9c0 \uc120\ud0dd",
+            initialdir=initial_directory,
+            filetypes=(
+                ("\uc774\ubbf8\uc9c0 \ud30c\uc77c", "*.png *.jpg *.jpeg *.gif"),
+                ("\ubaa8\ub4e0 \ud30c\uc77c", "*.*"),
+            ),
+            parent=self.root,
+        )
+        if selected:
+            self.preview_path.set(selected)
+
     def _active_asset_folder(self) -> Path | None:
         if self._current_mode() is AssetSourceMode.GITHUB:
             return GITHUB_ASSET_FOLDER
@@ -701,6 +744,17 @@ class WorkshopUploaderApp:
             output_folder.mkdir(parents=True, exist_ok=True)
         except OSError as error:
             raise ValueError(f"출력 폴더를 만들 수 없습니다: {output_folder}") from error
+        preview_value = self.preview_path.get().strip()
+        preview_path = (
+            Path(os.path.expandvars(preview_value)).expanduser().resolve()
+            if preview_value
+            else None
+        )
+        if preview_path is not None and not preview_path.is_file():
+            raise ValueError(
+                f"\ubbf8\ub9ac\ubcf4\uae30 \uc774\ubbf8\uc9c0\uac00 "
+                f"\uc874\uc7ac\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4: {preview_path}"
+            )
         return UploadOptions(
             workshop_id,
             chunk_size,
@@ -708,7 +762,7 @@ class WorkshopUploaderApp:
             description,
             local_folder,
             output_folder,
-            None,
+            preview_path,
         )
 
     def _bundled_git_path(self) -> Path:
@@ -1071,6 +1125,8 @@ class WorkshopUploaderApp:
             self.description_entry,
             self.output_path_entry,
             self.output_browse_button,
+            self.preview_path_entry,
+            self.preview_browse_button,
             self.asset_button,
             self.output_button,
         ):
