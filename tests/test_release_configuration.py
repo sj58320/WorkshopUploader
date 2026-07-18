@@ -29,6 +29,7 @@ class ReleaseConfigurationTests(unittest.TestCase):
         self.assertIn('$githubConfigPath;.', script)
         self.assertNotIn('$githubConfigPath;github_app.json', script)
         self.assertIn("fetch_mingit.ps1", script)
+        self.assertNotIn("repository_id", script)
 
     def test_vendor_cache_is_ignored(self) -> None:
         ignore = Path(".gitignore").read_text(encoding="utf-8")

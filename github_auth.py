@@ -9,14 +9,13 @@ import urllib.request
 from dataclasses import dataclass, replace
 from typing import Callable
 
+from repository_target import RepositoryTarget
 from windows_credentials import CredentialStore, GitHubCredential
 
 
 DEVICE_CODE_URL = "https://github.com/login/device/code"
 TOKEN_URL = "https://github.com/login/oauth/access_token"
 API_ROOT = "https://api.github.com"
-REPOSITORY_ID = 1157838808
-REPOSITORY_FULL_NAME = "RevenantZE/RSS-ZE-ASSET"
 TOKEN_REFRESH_MARGIN_SECONDS = 120.0
 TOKEN_PATTERN = re.compile(r"gh[a-z]_[A-Za-z0-9_]+", re.IGNORECASE)
 
@@ -44,6 +43,8 @@ class GitHubUser:
 @dataclass(frozen=True)
 class RepoPermission:
     repository_id: int
+    full_name: str
+    default_branch: str
     can_push: bool
 
 
@@ -65,7 +66,6 @@ class GitHubApiClient:
     def __init__(
         self,
         client_id: str,
-        repository_id: int = REPOSITORY_ID,
         *,
         opener: Callable = urllib.request.urlopen,
         clock: Callable[[], float] = time.time,
@@ -74,10 +74,7 @@ class GitHubApiClient:
         client_id = client_id.strip()
         if not client_id:
             raise GitHubAuthError("GitHub App client ID is missing")
-        if repository_id != REPOSITORY_ID:
-            raise GitHubAuthError("Unexpected GitHub repository ID")
         self.client_id = client_id
-        self.repository_id = repository_id
         self._opener = opener
         self.clock = clock
         self._sleeper = sleeper
@@ -123,7 +120,6 @@ class GitHubApiClient:
             DEVICE_CODE_URL,
             form={
                 "client_id": self.client_id,
-                "repository_id": str(self.repository_id),
             },
         )
         try:
@@ -235,21 +231,26 @@ class GitHubApiClient:
         except (KeyError, TypeError, ValueError) as error:
             raise GitHubAuthError("GitHub returned an invalid user profile") from error
 
-    def get_repo_permission(self, token: str) -> RepoPermission:
+    def get_repo_permission(
+        self,
+        token: str,
+        target: RepositoryTarget,
+    ) -> RepoPermission:
         payload = self._request_json(
-            f"{API_ROOT}/repos/{REPOSITORY_FULL_NAME}",
+            f"{API_ROOT}/repos/{target.api_path}",
             token=token,
         )
         try:
             repository_id = int(payload["id"])
             full_name = str(payload["full_name"])
+            default_branch = str(payload["default_branch"])
             permissions = payload["permissions"]
             can_push = permissions.get("push") is True
         except (KeyError, TypeError, ValueError) as error:
             raise GitHubAuthError("GitHub returned invalid repository permissions") from error
-        if repository_id != self.repository_id or full_name != REPOSITORY_FULL_NAME:
+        if full_name.casefold() != target.full_name.casefold():
             raise GitHubAuthError("GitHub returned an unexpected repository")
-        return RepoPermission(repository_id, can_push)
+        return RepoPermission(repository_id, full_name, default_branch, can_push)
 
 
 class GitHubAuthManager:
@@ -257,12 +258,25 @@ class GitHubAuthManager:
         self.api = api
         self.store = store
 
-    def _enrich(self, credential: GitHubCredential) -> GitHubSession:
+    def _enrich(
+        self,
+        credential: GitHubCredential,
+        target: RepositoryTarget,
+    ) -> GitHubSession:
         user = self.api.get_user(credential.access_token)
-        permission = self.api.get_repo_permission(credential.access_token)
+        try:
+            permission = self.api.get_repo_permission(
+                credential.access_token,
+                target,
+            )
+        except GitHubAuthError as error:
+            raise GitHubAuthError(
+                f"Cannot access {target.full_name}. Install the GitHub App on that "
+                "repository and grant this account access."
+            ) from error
         if not permission.can_push:
             raise GitHubAuthError(
-                "The signed-in account cannot push to RevenantZE/RSS-ZE-ASSET"
+                f"The signed-in account cannot push to {target.full_name}"
             )
         enriched = replace(
             credential,
@@ -274,15 +288,19 @@ class GitHubAuthManager:
 
     def login(
         self,
+        target: RepositoryTarget,
         on_code: Callable[[DeviceCode], None],
         cancelled: Callable[[], bool],
     ) -> GitHubSession:
         code = self.api.start_device_flow()
         on_code(code)
         credential = self.api.poll_device_flow(code, cancelled)
-        return self._enrich(credential)
+        return self._enrich(credential, target)
 
-    def get_valid_session(self) -> GitHubSession | None:
+    def get_valid_session(
+        self,
+        target: RepositoryTarget,
+    ) -> GitHubSession | None:
         credential = self.store.load()
         if credential is None:
             return None
@@ -295,7 +313,14 @@ class GitHubAuthManager:
             except GitHubAuthError:
                 self.store.delete()
                 return None
-        return self._enrich(credential)
+        return self._enrich(credential, target)
+
+    def validate_session(
+        self,
+        session: GitHubSession,
+        target: RepositoryTarget,
+    ) -> GitHubSession:
+        return self._enrich(session.credential, target)
 
     def logout(self) -> None:
         self.store.delete()

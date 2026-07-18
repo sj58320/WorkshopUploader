@@ -52,15 +52,17 @@ class AssetRepositoryIntegrationTests(unittest.TestCase):
         run_git(self.seed, "remote", "add", "origin", self.remote.as_uri())
         run_git(self.seed, "push", "-u", "origin", "main")
         run_git(self.remote, "symbolic-ref", "HEAD", "refs/heads/main")
-        runner = GitRunner(
+        self.runner = GitRunner(
             Path(shutil.which("git") or "git"),
             ensure_askpass(self.runtime),
         )
-        credential = GitHubCredential("token", None, None, None, "asset-user", 123)
+        self.credential = GitHubCredential(
+            "token", None, None, None, "asset-user", 123
+        )
         self.repository = AssetRepository(
-            runner,
+            self.runner,
             self.local,
-            credential,
+            self.credential,
             remote_url=self.remote.as_uri(),
         )
 
@@ -85,6 +87,46 @@ class AssetRepositoryIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(run_git(self.local, "branch", "--show-current"), "main")
 
+
+    def test_custom_branch_and_asset_subdir_are_used_for_commit_and_push(self) -> None:
+        run_git(self.seed, "checkout", "-b", "asset-dev")
+        custom_asset = self.seed / "game" / "assets"
+        custom_asset.mkdir(parents=True)
+        (custom_asset / "custom.txt").write_text("base", encoding="utf-8")
+        run_git(self.seed, "add", "-A")
+        run_git(self.seed, "commit", "-m", "add custom assets")
+        run_git(self.seed, "push", "-u", "origin", "asset-dev")
+
+        custom_local = self.root / "custom-local"
+        repository = AssetRepository(
+            self.runner,
+            custom_local,
+            self.credential,
+            remote_url=self.remote.as_uri(),
+            branch="asset-dev",
+            asset_subdir="game/assets",
+        )
+
+        result = repository.prepare()
+        (repository.asset_folder / "custom.txt").write_text(
+            "changed", encoding="utf-8"
+        )
+        commit_id = repository.commit(
+            "custom target", GitHubUser("asset-user", 123, None)
+        )
+        repository.push()
+
+        self.assertEqual(result.state, SyncState.READY)
+        self.assertEqual(run_git(custom_local, "branch", "--show-current"), "asset-dev")
+        self.assertEqual(repository.asset_folder, custom_local / "game" / "assets")
+        self.assertEqual(
+            run_git(self.remote, "show", "-s", "--format=%B", "asset-dev"),
+            "custom target",
+        )
+        committed = run_git(
+            custom_local, "show", "--format=", "--name-only", commit_id
+        )
+        self.assertEqual(committed, "game/assets/custom.txt")
 
     def test_modified_push_url_is_rejected(self) -> None:
         self.repository.prepare()

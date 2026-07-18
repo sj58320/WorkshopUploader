@@ -2,19 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from git_client import GitCommandError, GitRunner
 from github_auth import GitHubUser
+from repository_target import DEFAULT_ASSET_SUBDIR, DEFAULT_BRANCH
 from windows_credentials import GitHubCredential
 
 
-OWNER = "RevenantZE"
-REPOSITORY = "RSS-ZE-ASSET"
 REMOTE_URL = "https://github.com/RevenantZE/RSS-ZE-ASSET.git"
-DEFAULT_BRANCH = "main"
-ASSET_SUBDIR = Path("in") / "additional_files"
+ASSET_SUBDIR = PurePosixPath(DEFAULT_ASSET_SUBDIR)
 STASH_MESSAGE = "WorkshopUploader automatic sync"
 
 
@@ -48,6 +46,7 @@ class AssetRepository:
         *,
         remote_url: str = REMOTE_URL,
         branch: str = DEFAULT_BRANCH,
+        asset_subdir: str | PurePosixPath = ASSET_SUBDIR,
         progress: Callable[[SyncState, str], None] | None = None,
     ) -> None:
         self.runner = runner
@@ -55,11 +54,14 @@ class AssetRepository:
         self.credential = credential
         self.remote_url = remote_url
         self.branch = branch
+        self.asset_subdir = PurePosixPath(str(asset_subdir).replace("\\", "/"))
         self.progress = progress or (lambda _state, _message: None)
 
     @property
     def asset_folder(self) -> Path:
-        return self.root / ASSET_SUBDIR
+        if self.asset_subdir == PurePosixPath("."):
+            return self.root
+        return self.root.joinpath(*self.asset_subdir.parts)
 
     def _git(self, args, *, credential=False, stdin=None, check=True):
         return self.runner.run(
@@ -245,9 +247,9 @@ class AssetRepository:
         self._require_valid_repository()
         self._git(["config", "user.name", user.login])
         self._git(["config", "user.email", user.commit_email])
-        self._git(["add", "-A", "--", ASSET_SUBDIR.as_posix()])
+        self._git(["add", "-A", "--", self.asset_subdir.as_posix()])
         self._git(["commit", "--only", "--allow-empty", "--file", "-", "--",
-                   ASSET_SUBDIR.as_posix()], stdin=note)
+                   self.asset_subdir.as_posix()], stdin=note)
         return self.head()
 
     def push(self) -> None:

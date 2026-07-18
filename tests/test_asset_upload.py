@@ -178,6 +178,9 @@ class SettingsPersistenceTests(unittest.TestCase):
             "asset_folder": r"D:\CS2\Assets",
             "output_folder": r"D:\CS2\Output",
             "preview_path": r"D:\CS2\rss_banner.png",
+            "github_repository": "octo-org/assets",
+            "github_branch": "dev",
+            "github_asset_subdir": "game/assets",
         }
         with tempfile.TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "settings.json"
@@ -198,6 +201,9 @@ class SettingsPersistenceTests(unittest.TestCase):
             "asset_folder": r"D:\CS2\Assets",
             "output_folder": r"D:\CS2\Output",
             "preview_path": r"D:\CS2\rss_banner.png",
+            "github_repository": "octo-org/assets",
+            "github_branch": "dev",
+            "github_asset_subdir": "game/assets",
         }
         app.workshop_id = Mock(**{"get.return_value": values["workshop_id"]})
         app.workshop_title = Mock(
@@ -210,6 +216,13 @@ class SettingsPersistenceTests(unittest.TestCase):
         app.asset_folder = Mock(**{"get.return_value": values["asset_folder"]})
         app.output_folder = Mock(**{"get.return_value": values["output_folder"]})
         app.preview_path = Mock(**{"get.return_value": values["preview_path"]})
+        app.github_repository = Mock(
+            **{"get.return_value": values["github_repository"]}
+        )
+        app.github_branch = Mock(**{"get.return_value": values["github_branch"]})
+        app.github_asset_subdir = Mock(
+            **{"get.return_value": values["github_asset_subdir"]}
+        )
 
         with patch.object(workshop_uploader_gui, "save_settings") as save:
             app._on_close()
@@ -240,6 +253,37 @@ class SettingsPersistenceTests(unittest.TestCase):
             options = app._parse_options()
 
         self.assertEqual(options.preview_path, preview.resolve())
+
+    def test_parse_options_accepts_custom_github_target(self) -> None:
+        app = object.__new__(workshop_uploader_gui.WorkshopUploaderApp)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            app.workshop_id = Mock(**{"get.return_value": "1234567890"})
+            app.workshop_title = Mock(**{"get.return_value": "Title"})
+            app.workshop_description = Mock(**{"get.return_value": ""})
+            app.chunk_size = Mock(**{"get.return_value": "100"})
+            app.asset_folder = Mock(**{"get.return_value": ""})
+            app.output_folder = Mock(**{"get.return_value": str(root / "output")})
+            app.preview_path = Mock(**{"get.return_value": ""})
+            app.asset_source_mode = Mock(
+                **{"get.return_value": workshop_uploader_gui.AssetSourceMode.GITHUB.value}
+            )
+            app.github_repository = Mock(
+                **{"get.return_value": "octo-org/assets"}
+            )
+            app.github_branch = Mock(**{"get.return_value": "release/v2"})
+            app.github_asset_subdir = Mock(
+                **{"get.return_value": "game/additional_files"}
+            )
+
+            options = app._parse_options()
+
+        self.assertEqual(options.github_target.full_name, "octo-org/assets")
+        self.assertEqual(options.github_target.branch, "release/v2")
+        self.assertEqual(
+            options.github_target.asset_subdir_text,
+            "game/additional_files",
+        )
 
     def test_close_while_running_does_not_save(self) -> None:
         app = object.__new__(workshop_uploader_gui.WorkshopUploaderApp)

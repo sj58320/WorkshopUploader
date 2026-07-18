@@ -26,7 +26,6 @@ $vendorRoot = Join-Path $repoRoot '.vendor'
 $githubConfigPath = Join-Path $vendorRoot 'github_app.json'
 $githubConfig = [ordered]@{
     client_id = $clientId.Trim()
-    repository_id = 1157838808
 } | ConvertTo-Json -Compress
 $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText($githubConfigPath, $githubConfig, $utf8WithoutBom)

@@ -15,6 +15,7 @@ from pending_upload import (
     PendingUpload,
     PendingUploadStore,
 )
+from repository_target import RepositoryTarget
 from update_notes import normalize_update_note
 
 
@@ -27,6 +28,7 @@ class UploadOptions:
     local_asset_folder: Path
     output_folder: Path
     preview_path: Path | None
+    github_target: RepositoryTarget | None = None
     isolated_output: bool = True
 
     def uploader_kwargs(self, asset_folder: Path) -> dict:
@@ -62,7 +64,7 @@ class UploadWorkflow:
     def __init__(
         self,
         local_uploader: Callable = auto_update,
-        repository_factory: Callable[[GitHubSession], AssetRepository] | None = None,
+        repository_factory: Callable[[GitHubSession, RepositoryTarget], AssetRepository] | None = None,
         pending_store: PendingUploadStore | None = None,
         *,
         clock: Callable[[], str] = _utc_timestamp,
@@ -72,12 +74,16 @@ class UploadWorkflow:
         self.pending_store = pending_store
         self.clock = clock
 
-    def _repository(self, session: GitHubSession | None) -> AssetRepository:
+    def _repository(
+        self,
+        session: GitHubSession | None,
+        target: RepositoryTarget,
+    ) -> AssetRepository:
         if session is None:
             raise WorkflowBlocked("GitHub 로그인이 필요합니다.")
         if self.repository_factory is None:
             raise WorkflowBlocked("GitHub 저장소 동기화가 구성되지 않았습니다.")
-        return self.repository_factory(session)
+        return self.repository_factory(session, target)
 
     def _require_no_pending(self) -> None:
         if self.pending_store is not None and self.pending_store.exists():
@@ -86,15 +92,20 @@ class UploadWorkflow:
     def _ready_repository(
         self,
         session: GitHubSession | None,
+        target: RepositoryTarget,
     ) -> tuple[AssetRepository, SyncResult]:
-        repository = self._repository(session)
+        repository = self._repository(session, target)
         sync = repository.prepare()
         if sync.state is not SyncState.READY:
             raise WorkflowBlocked(sync.message, sync)
         return repository, sync
 
-    def prepare_github(self, session: GitHubSession | None) -> SyncResult:
-        _repository, sync = self._ready_repository(session)
+    def prepare_github(
+        self,
+        session: GitHubSession | None,
+        target: RepositoryTarget,
+    ) -> SyncResult:
+        _repository, sync = self._ready_repository(session, target)
         return sync
 
     def build_vpk(
@@ -110,7 +121,8 @@ class UploadWorkflow:
             sync = SyncResult(SyncState.READY, "로컬 모드")
             asset_folder = options.local_asset_folder
         else:
-            repository, sync = self._ready_repository(session)
+            target = options.github_target or RepositoryTarget.defaults()
+            repository, sync = self._ready_repository(session, target)
             asset_folder = repository.asset_folder
         result: UploadResult = self.local_uploader(
             options.workshop_id,
@@ -151,7 +163,8 @@ class UploadWorkflow:
             )
         if self.pending_store is None:
             raise WorkflowBlocked("GitHub push 복구 저장소가 구성되지 않았습니다.")
-        repository, sync = self._ready_repository(session)
+        target = options.github_target or RepositoryTarget.defaults()
+        repository, sync = self._ready_repository(session, target)
         base_commit = repository.head()
         pending = PendingUpload(
             schema_version=PENDING_SCHEMA_VERSION,
@@ -161,6 +174,9 @@ class UploadWorkflow:
             steam_succeeded_at=None,
             base_commit=base_commit,
             commit_id=None,
+            github_repository=target.full_name,
+            github_branch=target.branch,
+            github_asset_subdir=target.asset_subdir_text,
         )
         self.pending_store.save(pending)
         try:
@@ -237,15 +253,15 @@ class UploadWorkflow:
             raise WorkflowBlocked(
                 "Steam 업로드 결과를 확인할 수 없어 자동 재시도를 중단했습니다."
             )
-        repository = self._repository(session)
+        repository = self._repository(session, pending.target)
+        sync = repository.prepare()
+        if sync.state is not SyncState.READY:
+            raise WorkflowBlocked(sync.message, sync)
         commit_already_created = (
             pending.commit_id is None
             and repository.head() != pending.base_commit
             and repository.head_message() == pending.note
         )
-        sync = repository.prepare()
-        if sync.state is not SyncState.READY:
-            raise WorkflowBlocked(sync.message, sync)
         if pending.commit_id is None:
             if commit_already_created:
                 commit_id = repository.head()

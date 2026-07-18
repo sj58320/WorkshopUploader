@@ -9,6 +9,7 @@ from asset_sync import SyncResult, SyncState
 from asset_upload import UploadResult
 from github_auth import GitHubSession, GitHubUser
 from pending_upload import PendingUpload, PendingPhase
+from repository_target import RepositoryTarget
 from upload_workflow import UploadOptions, UploadWorkflow, WorkflowBlocked
 from windows_credentials import GitHubCredential
 
@@ -105,9 +106,12 @@ class UploadWorkflowTests(unittest.TestCase):
         self.uploader = FakeUploader()
         self.pending_store = MemoryPendingStore()
         self.factory_calls = 0
+        self.factory_targets = []
+        self.target = RepositoryTarget.parse("octo-org/assets", "dev", "custom/assets")
 
-        def repository_factory(session):
+        def repository_factory(session, target):
             self.factory_calls += 1
+            self.factory_targets.append(target)
             return self.repository
 
         self.workflow = UploadWorkflow(
@@ -124,6 +128,7 @@ class UploadWorkflowTests(unittest.TestCase):
             local_asset_folder=root / "local-assets",
             output_folder=root / "output",
             preview_path=None,
+            github_target=self.target,
         )
 
     def tearDown(self) -> None:
@@ -176,6 +181,7 @@ class UploadWorkflowTests(unittest.TestCase):
 
         self.assertEqual(observed[0].phase, PendingPhase.STEAM_STARTED)
         self.assertEqual(observed[0].workshop_id, self.options.workshop_id)
+        self.assertEqual(observed[0].target, self.target)
         self.assertIsNone(observed[0].steam_succeeded_at)
 
     def test_github_success_uses_identical_normalized_note(self) -> None:
@@ -219,7 +225,7 @@ class UploadWorkflowTests(unittest.TestCase):
         self.repository.pending_commits = True
         self.repository.current_head_message = "Update asset"
         self.pending_store.value = PendingUpload(
-            schema_version=2,
+            schema_version=3,
             phase=PendingPhase.STEAM_SUCCEEDED,
             workshop_id=1234567890,
             note="Update asset",
@@ -239,7 +245,7 @@ class UploadWorkflowTests(unittest.TestCase):
         self.repository.current_head_message = "older local commit"
         self.repository.pending_commits = True
         self.pending_store.value = PendingUpload(
-            schema_version=2,
+            schema_version=3,
             phase=PendingPhase.STEAM_SUCCEEDED,
             workshop_id=1234567890,
             note="Update asset",
@@ -257,7 +263,7 @@ class UploadWorkflowTests(unittest.TestCase):
 
     def test_ambiguous_steam_result_blocks_automatic_retry(self) -> None:
         self.pending_store.value = PendingUpload(
-            schema_version=2,
+            schema_version=3,
             phase=PendingPhase.STEAM_STARTED,
             workshop_id=1234567890,
             note="Update asset",
@@ -275,7 +281,7 @@ class UploadWorkflowTests(unittest.TestCase):
 
     def test_confirmed_steam_success_continues_with_git_only(self) -> None:
         self.pending_store.value = PendingUpload(
-            schema_version=2,
+            schema_version=3,
             phase=PendingPhase.STEAM_STARTED,
             workshop_id=0,
             note="Update asset",
@@ -297,7 +303,7 @@ class UploadWorkflowTests(unittest.TestCase):
 
     def test_confirmed_steam_failure_clears_ambiguous_record(self) -> None:
         self.pending_store.value = PendingUpload(
-            schema_version=2,
+            schema_version=3,
             phase=PendingPhase.STEAM_STARTED,
             workshop_id=1234567890,
             note="Update asset",

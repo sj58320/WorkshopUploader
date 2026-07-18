@@ -6,8 +6,15 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 
+from repository_target import (
+    DEFAULT_ASSET_SUBDIR,
+    DEFAULT_BRANCH,
+    DEFAULT_REPOSITORY,
+    RepositoryTarget,
+)
 
-PENDING_SCHEMA_VERSION = 2
+
+PENDING_SCHEMA_VERSION = 3
 
 
 class PendingPhase(str, Enum):
@@ -24,6 +31,17 @@ class PendingUpload:
     steam_succeeded_at: str | None
     base_commit: str
     commit_id: str | None
+    github_repository: str = DEFAULT_REPOSITORY
+    github_branch: str = DEFAULT_BRANCH
+    github_asset_subdir: str = DEFAULT_ASSET_SUBDIR
+
+    @property
+    def target(self) -> RepositoryTarget:
+        return RepositoryTarget.parse(
+            self.github_repository,
+            self.github_branch,
+            self.github_asset_subdir,
+        )
 
 
 class PendingUploadError(RuntimeError):
@@ -52,6 +70,24 @@ class PendingUploadStore:
             return None
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise TypeError("Pending upload payload must be an object")
+            if payload.get("schema_version") == 2:
+                default_target = RepositoryTarget.defaults()
+                payload.update(
+                    schema_version=PENDING_SCHEMA_VERSION,
+                    github_repository=default_target.full_name,
+                    github_branch=default_target.branch,
+                    github_asset_subdir=default_target.asset_subdir_text,
+                )
+            elif payload.get("schema_version") == PENDING_SCHEMA_VERSION:
+                required_target_fields = (
+                    "github_repository",
+                    "github_branch",
+                    "github_asset_subdir",
+                )
+                if any(field not in payload for field in required_target_fields):
+                    raise ValueError("Pending upload target is missing")
             payload["phase"] = PendingPhase(payload.get("phase"))
             pending = PendingUpload(**payload)
             self._validate(pending)
@@ -92,7 +128,12 @@ class PendingUploadStore:
                 and isinstance(pending.steam_succeeded_at, str)
                 and bool(pending.steam_succeeded_at)
             )
-        valid = common_valid and phase_valid
+        try:
+            pending.target
+            target_valid = True
+        except ValueError:
+            target_valid = False
+        valid = common_valid and phase_valid and target_valid
         if not valid:
             raise PendingUploadError("GitHub push 복구 정보가 올바르지 않습니다.")
 

@@ -21,6 +21,9 @@ PERSISTED_KEYS = (
     "output_folder",
     "preview_path",
     "asset_source_mode",
+    "github_repository",
+    "github_branch",
+    "github_asset_subdir",
 )
 
 

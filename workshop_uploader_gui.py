@@ -21,6 +21,12 @@ from github_auth import DeviceCode, GitHubApiClient, GitHubAuthManager, GitHubSe
 from github_config import GitHubConfigError, load_github_app_config
 from gui_state import compute_action_availability
 from pending_upload import PendingPhase, PendingUploadError, PendingUploadStore
+from repository_target import (
+    DEFAULT_ASSET_SUBDIR,
+    DEFAULT_BRANCH,
+    DEFAULT_REPOSITORY,
+    RepositoryTarget,
+)
 from update_notes import UPDATE_NOTE_PLACEHOLDER
 from upload_workflow import UploadOptions, UploadWorkflow, WorkflowResult
 from windows_credentials import WindowsCredentialStore
@@ -30,8 +36,6 @@ APP_TITLE = "CS2 Workshop Uploader"
 DEFAULT_WORKSHOP_ID = ""
 SETTINGS_PATH = asset_upload.RUNTIME_PATH / "settings.json"
 PENDING_PATH = asset_upload.RUNTIME_PATH / "pending_upload.json"
-REPOSITORY_ROOT = asset_upload.RUNTIME_PATH / "repos" / "RSS-ZE-ASSET"
-GITHUB_ASSET_FOLDER = REPOSITORY_ROOT / "in" / "additional_files"
 
 BG = "#F3F5F8"
 CARD = "#FFFFFF"
@@ -87,8 +91,19 @@ class WorkshopUploaderApp:
 
         saved = load_settings()
         saved_mode = app_settings.selected_mode(saved)
+        github_repository = saved.get("github_repository", DEFAULT_REPOSITORY)
+        github_branch = saved.get("github_branch", DEFAULT_BRANCH)
+        github_asset_subdir = saved.get("github_asset_subdir", DEFAULT_ASSET_SUBDIR)
         if self.pending_store.exists():
             saved_mode = AssetSourceMode.GITHUB
+            try:
+                pending = self.pending_store.load()
+                if pending is not None:
+                    github_repository = pending.target.full_name
+                    github_branch = pending.target.branch
+                    github_asset_subdir = pending.target.asset_subdir_text
+            except PendingUploadError:
+                pass
         self.asset_source_mode = tk.StringVar(
             value=saved_mode.value if saved_mode is not None else ""
         )
@@ -104,7 +119,10 @@ class WorkshopUploaderApp:
             value=saved.get("chunk_size_mb", str(asset_upload.DEFAULT_CHUNK_SIZE_MB))
         )
         self.asset_folder = tk.StringVar(value=saved.get("asset_folder", ""))
-        self.github_asset_folder = tk.StringVar(value=str(GITHUB_ASSET_FOLDER))
+        self.github_repository = tk.StringVar(value=github_repository)
+        self.github_branch = tk.StringVar(value=github_branch)
+        self.github_asset_subdir = tk.StringVar(value=github_asset_subdir)
+        self.github_asset_folder = tk.StringVar(value="")
         self.output_folder = tk.StringVar(
             value=saved.get(
                 "output_folder", str(asset_upload.RUNTIME_PATH / "output")
@@ -114,10 +132,17 @@ class WorkshopUploaderApp:
         self.status = tk.StringVar(value="준비됨")
         self.github_status = tk.StringVar(value="GitHub 로그인 필요")
         self.note_placeholder_active = False
+        self._refresh_github_asset_folder()
 
         self._configure_window()
         self._build_ui()
         self.asset_folder.trace_add("write", lambda *_args: self._apply_availability())
+        for variable in (
+            self.github_repository,
+            self.github_branch,
+            self.github_asset_subdir,
+        ):
+            variable.trace_add("write", lambda *_args: self._on_github_target_change())
         self.root.after(100, self._drain_events)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         if saved_mode is None and not self.pending_store.exists():
@@ -159,6 +184,9 @@ class WorkshopUploaderApp:
             "asset_folder": self.asset_folder.get(),
             "output_folder": self.output_folder.get(),
             "preview_path": self.preview_path.get(),
+            "github_repository": self.github_repository.get(),
+            "github_branch": self.github_branch.get(),
+            "github_asset_subdir": self.github_asset_subdir.get(),
         }
         mode = getattr(self, "asset_source_mode", None)
         if mode is not None and mode.get() in {
@@ -428,6 +456,59 @@ class WorkshopUploaderApp:
         )
         self.github_action_button.grid(row=0, column=1, padx=(8, 18), pady=13)
 
+        github_target = tk.Frame(self.github_card, bg=CARD)
+        github_target.grid(
+            row=1, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 14)
+        )
+        github_target.grid_columnconfigure(1, weight=3)
+        github_target.grid_columnconfigure(3, weight=1)
+        github_target.grid_columnconfigure(5, weight=2)
+        tk.Label(
+            github_target,
+            text="\uc800\uc7a5\uc18c",
+            bg=CARD,
+            fg=TEXT,
+            font=FONT_SMALL,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 6))
+        self.github_repository_entry = ttk.Entry(
+            github_target,
+            textvariable=self.github_repository,
+            style="Uploader.TEntry",
+            font=FONT_BODY,
+        )
+        self.github_repository_entry.grid(
+            row=0, column=1, sticky="ew", padx=(0, 12)
+        )
+        tk.Label(
+            github_target,
+            text="\ube0c\ub79c\uce58",
+            bg=CARD,
+            fg=TEXT,
+            font=FONT_SMALL,
+        ).grid(row=0, column=2, sticky="w", padx=(0, 6))
+        self.github_branch_entry = ttk.Entry(
+            github_target,
+            textvariable=self.github_branch,
+            style="Uploader.TEntry",
+            font=FONT_BODY,
+            width=12,
+        )
+        self.github_branch_entry.grid(row=0, column=3, sticky="ew", padx=(0, 12))
+        tk.Label(
+            github_target,
+            text="\uc5d0\uc14b \uacbd\ub85c",
+            bg=CARD,
+            fg=TEXT,
+            font=FONT_SMALL,
+        ).grid(row=0, column=4, sticky="w", padx=(0, 6))
+        self.github_asset_subdir_entry = ttk.Entry(
+            github_target,
+            textvariable=self.github_asset_subdir,
+            style="Uploader.TEntry",
+            font=FONT_BODY,
+        )
+        self.github_asset_subdir_entry.grid(row=0, column=5, sticky="ew")
+
         actions = tk.Frame(body, bg=BG)
         actions.grid(row=2, column=0, sticky="ew", pady=14)
         actions.grid_columnconfigure(0, weight=1)
@@ -529,6 +610,34 @@ class WorkshopUploaderApp:
         except ValueError:
             return None
 
+    def _repository_target(self) -> RepositoryTarget:
+        return RepositoryTarget.parse(
+            self.github_repository.get(),
+            self.github_branch.get(),
+            self.github_asset_subdir.get(),
+        )
+
+    def _refresh_github_asset_folder(self) -> None:
+        try:
+            target = self._repository_target()
+        except ValueError:
+            self.github_asset_folder.set("")
+            return
+        repository_root = target.clone_root(asset_upload.RUNTIME_PATH)
+        self.github_asset_folder.set(str(target.asset_folder(repository_root)))
+
+    def _on_github_target_change(self) -> None:
+        self._refresh_github_asset_folder()
+        if (
+            self._current_mode() is AssetSourceMode.GITHUB
+            and not self.pending_store.exists()
+        ):
+            self.sync_state = SyncState.ERROR
+            self.github_status.set(
+                "\uc800\uc7a5\uc18c \uc124\uc815\uc774 \ubcc0\uacbd\ub418\uc5c8\uc2b5\ub2c8\ub2e4. \ub2e4\uc2dc \ud655\uc778\ud558\uc138\uc694."
+            )
+            self._apply_availability()
+
 
     def _pending_steam_result_unknown(self) -> bool:
         if not self.pending_store.exists():
@@ -586,6 +695,7 @@ class WorkshopUploaderApp:
             self.github_status.set("로컬 모드")
         else:
             self.github_card.grid()
+            self._refresh_github_asset_folder()
             self.asset_path_entry.configure(textvariable=self.github_asset_folder)
             if self.pending_store.exists():
                 self.sync_state = SyncState.PUSH_PENDING
@@ -674,7 +784,11 @@ class WorkshopUploaderApp:
 
     def _active_asset_folder(self) -> Path | None:
         if self._current_mode() is AssetSourceMode.GITHUB:
-            return GITHUB_ASSET_FOLDER
+            try:
+                target = self._repository_target()
+            except ValueError:
+                return None
+            return target.asset_folder(target.clone_root(asset_upload.RUNTIME_PATH))
         value = self.asset_folder.get().strip()
         return Path(os.path.expandvars(value)).expanduser() if value else None
 
@@ -755,6 +869,11 @@ class WorkshopUploaderApp:
                 f"\ubbf8\ub9ac\ubcf4\uae30 \uc774\ubbf8\uc9c0\uac00 "
                 f"\uc874\uc7ac\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4: {preview_path}"
             )
+        github_target = (
+            self._repository_target()
+            if self._current_mode() is AssetSourceMode.GITHUB
+            else None
+        )
         return UploadOptions(
             workshop_id,
             chunk_size,
@@ -763,6 +882,7 @@ class WorkshopUploaderApp:
             local_folder,
             output_folder,
             preview_path,
+            github_target=github_target,
         )
 
     def _bundled_git_path(self) -> Path:
@@ -779,11 +899,17 @@ class WorkshopUploaderApp:
             raise GitHubConfigError(f"번들 MinGit을 찾을 수 없습니다: {git_exe}")
         runner = GitRunner(git_exe, ensure_askpass(asset_upload.RUNTIME_PATH))
 
-        def repository_factory(session: GitHubSession) -> AssetRepository:
+        def repository_factory(
+            session: GitHubSession,
+            target: RepositoryTarget,
+        ) -> AssetRepository:
             return AssetRepository(
                 runner,
-                REPOSITORY_ROOT,
+                target.clone_root(asset_upload.RUNTIME_PATH),
                 session.credential,
+                remote_url=target.remote_url,
+                branch=target.branch,
+                asset_subdir=target.asset_subdir,
                 progress=lambda state, message: self.events.put(
                     ("github_state", (state, message))
                 ),
@@ -791,7 +917,7 @@ class WorkshopUploaderApp:
 
         self.repository_factory = repository_factory
         self.auth_manager = GitHubAuthManager(
-            GitHubApiClient(config.client_id, config.repository_id),
+            GitHubApiClient(config.client_id),
             WindowsCredentialStore(),
         )
         self.workflow = UploadWorkflow(
@@ -801,27 +927,40 @@ class WorkshopUploaderApp:
     def _start_github_prepare(self, *, login: bool) -> None:
         if self.running or self._current_mode() is not AssetSourceMode.GITHUB:
             return
-        self._set_running(True, "GitHub 확인 중...")
+        try:
+            target = self._repository_target()
+        except ValueError as error:
+            messagebox.showerror(APP_TITLE, str(error), parent=self.root)
+            return
+        self._save_settings()
+        self._set_running(True, "GitHub \ud655\uc778 \uc911...")
         threading.Thread(
-            target=self._run_github_prepare, args=(login,), daemon=True
+            target=self._run_github_prepare,
+            args=(login, target),
+            daemon=True,
         ).start()
 
-    def _run_github_prepare(self, login: bool) -> None:
+    def _run_github_prepare(
+        self,
+        login: bool,
+        target: RepositoryTarget,
+    ) -> None:
         try:
             self._ensure_github_services()
             if login:
                 self.cancel_login.clear()
                 session = self.auth_manager.login(
+                    target,
                     lambda code: self.events.put(("device_code", code)),
                     self.cancel_login.is_set,
                 )
             else:
-                session = self.auth_manager.get_valid_session()
+                session = self.auth_manager.get_valid_session(target)
             if session is None:
                 self.events.put(("github_login_required", None))
                 return
-            sync = self.workflow.prepare_github(session)
-            self.events.put(("github_ready", (session, sync)))
+            sync = self.workflow.prepare_github(session, target)
+            self.events.put(("github_ready", (session, sync, target)))
         except Exception as error:
             self.events.put(("log", "\n" + traceback.format_exc()))
             self.events.put(("github_error", str(error)))
@@ -885,10 +1024,18 @@ class WorkshopUploaderApp:
     def _run_pending_retry(self) -> None:
         try:
             self._ensure_github_services()
-            session = self.session or self.auth_manager.get_valid_session()
+            pending = self.pending_store.load()
+            if pending is None:
+                raise RuntimeError("No pending GitHub push was found")
+            target = pending.target
+            if self.session is not None:
+                session = self.auth_manager.validate_session(self.session, target)
+            else:
+                session = self.auth_manager.get_valid_session(target)
             if session is None:
                 self.cancel_login.clear()
                 session = self.auth_manager.login(
+                    target,
                     lambda code: self.events.put(("device_code", code)),
                     self.cancel_login.is_set,
                 )
@@ -999,10 +1146,11 @@ class WorkshopUploaderApp:
                     self.github_status.set("GitHub 로그인이 필요합니다.")
                     self._set_running(False)
                 elif event == "github_ready":
-                    self.session, sync = value
+                    self.session, sync, target = value
                     self.sync_state = sync.state
                     self.github_status.set(
-                        f"{sync.message} · 로그인: {self.session.user.login}"
+                        f"{sync.message} · {target.full_name} · 로그인: "
+                        f"{self.session.user.login}"
                     )
                     self._set_running(False)
                 elif event == "github_error":
@@ -1132,6 +1280,17 @@ class WorkshopUploaderApp:
         ):
             widget.configure(state=common_state)
         self.update_note.configure(state=common_state)
+        target_state = (
+            "normal"
+            if not self.running and not self.pending_store.exists()
+            else "disabled"
+        )
+        for widget in (
+            self.github_repository_entry,
+            self.github_branch_entry,
+            self.github_asset_subdir_entry,
+        ):
+            widget.configure(state=target_state)
         if mode is AssetSourceMode.LOCAL:
             self.asset_path_entry.configure(
                 textvariable=self.asset_folder, state=common_state

@@ -12,6 +12,7 @@ from github_auth import (
     GitHubAuthError,
     GitHubAuthManager,
 )
+from repository_target import RepositoryTarget
 from windows_credentials import GitHubCredential
 
 
@@ -59,6 +60,8 @@ class MemoryStore:
         self.deleted = True
 
 
+TARGET = RepositoryTarget.parse("octo-org/assets", "main", "game/assets")
+
 TOKEN_RESPONSE = {
     "access_token": "ghu_test_access",
     "expires_in": 28800,
@@ -70,7 +73,7 @@ TOKEN_RESPONSE = {
 
 
 class GitHubApiClientTests(unittest.TestCase):
-    def test_device_flow_sends_fixed_repository_id(self) -> None:
+    def test_device_flow_sends_only_public_client_id(self) -> None:
         opener = FakeOpener(
             {
                 "device_code": "device-code",
@@ -85,7 +88,7 @@ class GitHubApiClientTests(unittest.TestCase):
         code = api.start_device_flow()
 
         self.assertEqual(code.user_code, "ABCD-EFGH")
-        self.assertEqual(opener.form(0)["repository_id"], "1157838808")
+        self.assertEqual(opener.form(0), {"client_id": "Iv1.test"})
 
     def test_poll_waits_for_pending_and_honors_slow_down(self) -> None:
         opener = FakeOpener(
@@ -132,11 +135,11 @@ class GitHubApiClientTests(unittest.TestCase):
         self.assertEqual(form["refresh_token"], "ghr_test_refresh")
         self.assertEqual(refreshed.login, "asset-user")
 
-    def test_permission_requires_fixed_repository_and_push(self) -> None:
+    def test_permission_checks_selected_repository_and_push(self) -> None:
         opener = FakeOpener(
             {
                 "id": 1157838808,
-                "full_name": "RevenantZE/RSS-ZE-ASSET",
+                "full_name": "octo-org/assets",
                 "private": True,
                 "default_branch": "main",
                 "permissions": {
@@ -150,9 +153,11 @@ class GitHubApiClientTests(unittest.TestCase):
         )
         api = GitHubApiClient("Iv1.test", opener=opener)
 
-        permission = api.get_repo_permission("ghu_test_access")
+        permission = api.get_repo_permission("ghu_test_access", TARGET)
 
         self.assertEqual(permission.repository_id, 1157838808)
+        self.assertEqual(permission.full_name, "octo-org/assets")
+        self.assertEqual(opener.requests[0].full_url, "https://api.github.com/repos/octo-org/assets")
         self.assertTrue(permission.can_push)
 
 
@@ -178,7 +183,7 @@ class GitHubAuthManagerTests(unittest.TestCase):
         )
         manager = GitHubAuthManager(api, store)
 
-        session = manager.get_valid_session()
+        session = manager.get_valid_session(TARGET)
 
         self.assertEqual(session.credential.access_token, "fresh")
         self.assertEqual(session.user.login, "asset-user")
@@ -192,7 +197,7 @@ class GitHubAuthManagerTests(unittest.TestCase):
         api.refresh.side_effect = GitHubAuthError("revoked")
         manager = GitHubAuthManager(api, store)
 
-        self.assertIsNone(manager.get_valid_session())
+        self.assertIsNone(manager.get_valid_session(TARGET))
         self.assertTrue(store.deleted)
 
 

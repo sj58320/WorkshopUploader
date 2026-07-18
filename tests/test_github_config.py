@@ -19,7 +19,6 @@ class GitHubConfigTests(unittest.TestCase):
             )
 
         self.assertEqual(config.client_id, "Iv1.source-test")
-        self.assertEqual(config.repository_id, 1157838808)
 
     def test_bundle_reads_generated_json(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -33,7 +32,7 @@ class GitHubConfigTests(unittest.TestCase):
 
         self.assertEqual(config.client_id, "Iv1.bundle-test")
 
-    def test_missing_or_wrong_repository_config_fails_closed(self) -> None:
+    def test_missing_client_id_fails_closed_and_legacy_repo_id_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             bundle = Path(temporary_directory)
             with self.assertRaises(GitHubConfigError):
@@ -42,8 +41,8 @@ class GitHubConfigTests(unittest.TestCase):
                 '{"client_id":"Iv1.bad","repository_id":1}',
                 encoding="utf-8",
             )
-            with self.assertRaises(GitHubConfigError):
-                load_github_app_config(bundle, {})
+            config = load_github_app_config(bundle, {})
+            self.assertEqual(config.client_id, "Iv1.bad")
 
 
 if __name__ == "__main__":
