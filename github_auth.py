@@ -9,6 +9,7 @@ import urllib.request
 from dataclasses import dataclass, replace
 from typing import Callable
 
+from localization import tr
 from repository_target import RepositoryTarget
 from windows_credentials import CredentialStore, GitHubCredential
 
@@ -271,12 +272,19 @@ class GitHubAuthManager:
             )
         except GitHubAuthError as error:
             raise GitHubAuthError(
-                f"Cannot access {target.full_name}. Install the GitHub App on that "
-                "repository and grant this account access."
+                tr(
+                    "{target}에 접근할 수 없습니다. 해당 저장소에 GitHub App을 설치하고 이 계정에 접근 권한을 부여하세요.",
+                    "Cannot access {target}. Install the GitHub App on that repository and grant this account access.",
+                    target=target.full_name,
+                )
             ) from error
         if not permission.can_push:
             raise GitHubAuthError(
-                f"The signed-in account cannot push to {target.full_name}"
+                tr(
+                    "로그인한 계정은 {target}에 push할 수 없습니다.",
+                    "The signed-in account cannot push to {target}.",
+                    target=target.full_name,
+                )
             )
         enriched = replace(
             credential,

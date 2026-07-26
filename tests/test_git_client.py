@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import tempfile
@@ -31,6 +32,24 @@ class FakeProcessFactory:
         return subprocess.CompletedProcess(command, self.returncode, "stdout", self.stderr)
 
 
+class FakeStreamingProcess:
+    def __init__(self, output: str, returncode: int = 0) -> None:
+        self.stdout = io.StringIO(output)
+        self.stdin = None
+        self.returncode = returncode
+
+    def wait(self) -> int:
+        return self.returncode
+
+
+class FakePopenFactory:
+    def __init__(self, output: str) -> None:
+        self.output = output
+        self.calls: list[tuple[list[str], dict]] = []
+
+    def __call__(self, command, **kwargs):
+        self.calls.append((command, kwargs))
+        return FakeStreamingProcess(self.output)
 class GitRunnerTests(unittest.TestCase):
     def test_uses_fixed_executable_and_disables_interactive_credentials(self) -> None:
         process = FakeProcessFactory()
@@ -89,6 +108,32 @@ class GitRunnerTests(unittest.TestCase):
 
         self.assertNotIn(CREDENTIAL.access_token, str(raised.exception))
 
+    def test_streaming_output_reports_progress_and_redacts_token(self) -> None:
+        process = FakePopenFactory(
+            "Receiving objects: 42% (42/100) ghu_test_secret\n"
+        )
+        runner = GitRunner(
+            Path("git.exe"),
+            Path("askpass.cmd"),
+            popen_factory=process,
+        )
+        lines: list[str] = []
+
+        result = runner.run_streaming(
+            ["clone", "--progress", "origin"],
+            credential=CREDENTIAL,
+            progress=lines.append,
+        )
+
+        self.assertEqual(
+            lines,
+            ["Receiving objects: 42% (42/100) [REDACTED]"],
+        )
+        self.assertNotIn(CREDENTIAL.access_token, result.stdout)
+        self.assertEqual(
+            process.calls[0][1]["env"]["WORKSHOP_UPLOADER_GIT_PASSWORD"],
+            CREDENTIAL.access_token,
+        )
     def test_ensure_askpass_writes_no_secret(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             path = ensure_askpass(Path(temporary_directory))

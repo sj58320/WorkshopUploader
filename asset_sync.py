@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -9,11 +10,50 @@ from git_client import GitCommandError, GitRunner
 from github_auth import GitHubUser
 from repository_target import DEFAULT_ASSET_SUBDIR, DEFAULT_BRANCH
 from windows_credentials import GitHubCredential
+from localization import tr
 
 
 REMOTE_URL = "https://github.com/RevenantZE/RSS-ZE-ASSET.git"
 ASSET_SUBDIR = PurePosixPath(DEFAULT_ASSET_SUBDIR)
 STASH_MESSAGE = "WorkshopUploader automatic sync"
+
+_GIT_PROGRESS_PATTERN = re.compile(
+    r"(?:remote:\s*)?(Receiving objects|Resolving deltas|Updating files):\s*"
+    r"(\d+)%?(?:\s*\((\d+)/(\d+)\))?",
+    re.IGNORECASE,
+)
+_GIT_PROGRESS_RANGES = {
+    "receiving objects": (0, 85),
+    "resolving deltas": (85, 10),
+    "updating files": (95, 5),
+}
+
+
+@dataclass(frozen=True)
+class GitTransferProgress:
+    phase: str
+    phase_percent: int
+    overall_percent: int
+    current: int | None
+    total: int | None
+
+
+def parse_git_progress(line: str) -> GitTransferProgress | None:
+    match = _GIT_PROGRESS_PATTERN.search(line)
+    if match is None:
+        return None
+    phase = match.group(1).lower()
+    phase_percent = min(100, max(0, int(match.group(2))))
+    start, span = _GIT_PROGRESS_RANGES[phase]
+    current = int(match.group(3)) if match.group(3) is not None else None
+    total = int(match.group(4)) if match.group(4) is not None else None
+    return GitTransferProgress(
+        phase,
+        phase_percent,
+        min(100, start + round(phase_percent * span / 100)),
+        current,
+        total,
+    )
 
 
 class SyncState(str, Enum):
@@ -47,7 +87,7 @@ class AssetRepository:
         remote_url: str = REMOTE_URL,
         branch: str = DEFAULT_BRANCH,
         asset_subdir: str | PurePosixPath = ASSET_SUBDIR,
-        progress: Callable[[SyncState, str], None] | None = None,
+        progress: Callable[[SyncState, str, int | None], None] | None = None,
     ) -> None:
         self.runner = runner
         self.root = Path(root)
@@ -55,7 +95,7 @@ class AssetRepository:
         self.remote_url = remote_url
         self.branch = branch
         self.asset_subdir = PurePosixPath(str(asset_subdir).replace("\\", "/"))
-        self.progress = progress or (lambda _state, _message: None)
+        self.progress = progress or (lambda _state, _message, _percent: None)
 
     @property
     def asset_folder(self) -> Path:
@@ -83,7 +123,7 @@ class AssetRepository:
         if not (self.root / ".git").is_dir():
             return SyncResult(
                 SyncState.ERROR,
-                f"Git 저장소가 올바르지 않습니다: {self.root}",
+                tr("Git 저장소가 올바르지 않습니다: {path}", "The Git repository is invalid: {path}", path=self.root),
             )
         expected_remote = self._normalized_remote(self.remote_url)
         remote_commands = (
@@ -102,19 +142,19 @@ class AssetRepository:
             ):
                 return SyncResult(
                     SyncState.ERROR,
-                    "origin의 fetch/push URL이 지정된 에셋 저장소와 다릅니다.",
+                    tr("origin의 fetch/push URL이 지정된 에셋 저장소와 다릅니다.", "The origin fetch/push URL does not match the selected asset repository."),
                 )
         rewrites = self._git(
             ["config", "--local", "--get-regexp", "^url\\..*\\.(insteadof|pushinsteadof)$"],
             check=False,
         )
         if rewrites.returncode == 0 and rewrites.stdout.strip():
-            return SyncResult(SyncState.ERROR, "로컬 Git URL 재작성 설정은 허용되지 않습니다.")
+            return SyncResult(SyncState.ERROR, tr("로컬 Git URL 재작성 설정은 허용되지 않습니다.", "Local Git URL rewrite settings are not allowed."))
         branch = self._git(["branch", "--show-current"], check=False).stdout.strip()
         if branch != self.branch:
             return SyncResult(
                 SyncState.ERROR,
-                f"현재 브랜치가 {self.branch}이 아닙니다: {branch or 'detached HEAD'}",
+                tr("현재 브랜치가 {expected}이 아닙니다: {actual}", "The current branch is not {expected}: {actual}", expected=self.branch, actual=branch or "detached HEAD"),
             )
 
     def _require_valid_repository(self) -> None:
@@ -122,17 +162,45 @@ class AssetRepository:
         if validation is not None:
             raise AssetRepositoryError(validation.message)
 
+    def _git_progress_callback(self) -> Callable[[str], None]:
+        last_percent = 0
+
+        def report(line: str) -> None:
+            nonlocal last_percent
+            parsed = parse_git_progress(line)
+            if parsed is None:
+                return
+            last_percent = max(last_percent, parsed.overall_percent)
+            if parsed.phase == "receiving objects":
+                labels = ("파일을 받는 중", "Receiving files")
+            elif parsed.phase == "resolving deltas":
+                labels = ("변경사항을 정리하는 중", "Resolving changes")
+            else:
+                labels = ("파일을 적용하는 중", "Updating files")
+            detail = f"{parsed.phase_percent}%"
+            if parsed.current is not None and parsed.total is not None:
+                detail += f" ({parsed.current}/{parsed.total})"
+            self.progress(
+                SyncState.DOWNLOADING,
+                f"{tr(*labels)} {detail}",
+                last_percent,
+            )
+
+        return report
+
     def _fetch_fixed_remote(self) -> None:
-        self._git(
+        self.runner.run_streaming(
             [
                 "fetch",
+                "--progress",
                 "--prune",
                 self.remote_url,
                 f"+refs/heads/{self.branch}:refs/remotes/origin/{self.branch}",
             ],
-            credential=True,
+            cwd=self.root,
+            credential=self.credential,
+            progress=self._git_progress_callback(),
         )
-        return None
 
     def _conflicts(self) -> tuple[str, ...]:
         result = self._git(
@@ -146,7 +214,7 @@ class AssetRepository:
         if conflicts:
             return SyncResult(
                 SyncState.CONFLICT,
-                "동일한 파일의 원격/로컬 변경이 충돌했습니다.",
+                tr("동일한 파일의 원격/로컬 변경이 충돌했습니다.", "Remote and local changes conflict in the same file."),
                 conflicts,
             )
         return SyncResult(SyncState.ERROR, str(error))
@@ -187,12 +255,17 @@ class AssetRepository:
 
     def prepare(self) -> SyncResult:
         if not self.root.exists():
-            self.progress(SyncState.DOWNLOADING, "최초 에셋을 다운로드하는 중...")
+            self.progress(
+                SyncState.DOWNLOADING,
+                tr("최초 에셋을 다운로드하는 중...", "Downloading assets for the first time..."),
+                0,
+            )
             self.root.parent.mkdir(parents=True, exist_ok=True)
             try:
-                self.runner.run(
+                self.runner.run_streaming(
                     [
                         "clone",
+                        "--progress",
                         "--depth",
                         "1",
                         "--single-branch",
@@ -202,10 +275,20 @@ class AssetRepository:
                         str(self.root),
                     ],
                     credential=self.credential,
+                    progress=self._git_progress_callback(),
+                )
+                self.progress(
+                    SyncState.DOWNLOADING,
+                    tr("다운로드 완료", "Download complete"),
+                    100,
                 )
             except GitCommandError as error:
                 return SyncResult(SyncState.ERROR, str(error))
-        self.progress(SyncState.CHECKING, "원격 변경사항을 확인하는 중...")
+        self.progress(
+            SyncState.CHECKING,
+            tr("원격 변경사항을 확인하는 중...", "Checking remote changes..."),
+            None,
+        )
         validation = self._validate_repository()
         if validation is not None:
             return validation
@@ -213,7 +296,7 @@ class AssetRepository:
         if existing_conflicts:
             return SyncResult(
                 SyncState.CONFLICT,
-                "먼저 기존 Git 충돌을 해결하세요.",
+                tr("먼저 기존 Git 충돌을 해결하세요.", "Resolve the existing Git conflict first."),
                 existing_conflicts,
             )
         try:
@@ -239,9 +322,9 @@ class AssetRepository:
         if not self.asset_folder.is_dir():
             return SyncResult(
                 SyncState.ERROR,
-                f"에셋 폴더가 없습니다: {self.asset_folder}",
+                tr("에셋 폴더가 없습니다: {path}", "The asset folder does not exist: {path}", path=self.asset_folder),
             )
-        return SyncResult(SyncState.READY, "최신 상태")
+        return SyncResult(SyncState.READY, tr("최신 상태", "Up to date"))
 
     def commit(self, note: str, user: GitHubUser) -> str:
         self._require_valid_repository()
