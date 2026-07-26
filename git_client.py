@@ -65,11 +65,13 @@ class GitRunner:
         *,
         process_factory: Callable = subprocess.run,
         base_env: Mapping[str, str] | None = None,
+        popen_factory: Callable = subprocess.Popen,
     ) -> None:
         self.git_exe = Path(git_exe)
         self.askpass_path = Path(askpass_path)
         self._process_factory = process_factory
         self._base_env = dict(os.environ if base_env is None else base_env)
+        self._popen_factory = popen_factory
 
     def run(
         self,
@@ -131,5 +133,80 @@ class GitRunner:
             safe_command,
         )
         if check and completed.returncode != 0:
+            raise GitCommandError(result)
+        return result
+
+    def run_streaming(
+        self,
+        args: Sequence[str | Path],
+        *,
+        cwd: Path | None = None,
+        credential: GitHubCredential | None = None,
+        stdin: str | None = None,
+        check: bool = True,
+        progress: Callable[[str], None] | None = None,
+    ) -> GitResult:
+        string_args = tuple(str(argument) for argument in args)
+        command = [str(self.git_exe), *string_args]
+        environment = dict(self._base_env)
+        environment.update(
+            {
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": "NUL" if os.name == "nt" else "/dev/null",
+                "GIT_CONFIG_COUNT": "2",
+                "GIT_CONFIG_KEY_0": "credential.helper",
+                "GIT_CONFIG_VALUE_0": "",
+                "GIT_CONFIG_KEY_1": "http.sslVerify",
+                "GIT_CONFIG_VALUE_1": "true",
+            }
+        )
+        if credential is not None:
+            environment.update(
+                {
+                    "GIT_ASKPASS": str(self.askpass_path),
+                    "GIT_ASKPASS_REQUIRE": "force",
+                    "WORKSHOP_UPLOADER_GIT_USERNAME": (
+                        credential.login or "x-access-token"
+                    ),
+                    "WORKSHOP_UPLOADER_GIT_PASSWORD": credential.access_token,
+                }
+            )
+        creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        process = self._popen_factory(
+            command,
+            cwd=str(cwd) if cwd is not None else None,
+            env=environment,
+            stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            creationflags=creation_flags,
+        )
+        if stdin is not None and process.stdin is not None:
+            process.stdin.write(stdin)
+            process.stdin.close()
+        output_parts: list[str] = []
+        if process.stdout is not None:
+            try:
+                for line in process.stdout:
+                    safe_line = _redact(line, credential)
+                    output_parts.append(safe_line)
+                    if progress is not None:
+                        progress(safe_line.rstrip("\r\n"))
+            finally:
+                process.stdout.close()
+        returncode = process.wait()
+        stdout = "".join(output_parts)
+        result = GitResult(
+            string_args,
+            returncode,
+            stdout,
+            "",
+            _redact(subprocess.list2cmdline(command), credential),
+        )
+        if check and returncode != 0:
             raise GitCommandError(result)
         return result

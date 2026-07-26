@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from asset_sync import AssetRepository, SyncState
+from asset_sync import AssetRepository, SyncState, parse_git_progress
 from git_client import GitRunner, ensure_askpass
 from github_auth import GitHubUser
 from windows_credentials import GitHubCredential
@@ -218,5 +218,20 @@ class AssetRepositoryIntegrationTests(unittest.TestCase):
         self.assertIn("A  README.md", run_git(self.local, "status", "--short"))
 
 
+class GitProgressParserTests(unittest.TestCase):
+    def test_maps_git_phases_to_monotonic_overall_percent(self) -> None:
+        receiving = parse_git_progress("Receiving objects: 42% (42/100), 1.00 MiB")
+        resolving = parse_git_progress("Resolving deltas: 50% (5/10)")
+        updating = parse_git_progress("Updating files: 100% (10/10)")
+
+        self.assertIsNotNone(receiving)
+        self.assertEqual(receiving.phase_percent, 42)
+        self.assertEqual(receiving.overall_percent, 36)
+        self.assertEqual((receiving.current, receiving.total), (42, 100))
+        self.assertEqual(resolving.overall_percent, 90)
+        self.assertEqual(updating.overall_percent, 100)
+
+    def test_ignores_unrelated_git_output(self) -> None:
+        self.assertIsNone(parse_git_progress("Already up to date."))
 if __name__ == "__main__":
     unittest.main()

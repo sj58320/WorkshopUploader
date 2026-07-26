@@ -5,6 +5,7 @@ import os
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
+from localization import tr
 
 from repository_target import (
     DEFAULT_ASSET_SUBDIR,
@@ -99,7 +100,7 @@ class PendingUploadStore:
             TypeError,
             ValueError,
         ) as error:
-            raise PendingUploadError("GitHub push 복구 정보가 손상되었습니다.") from error
+            raise PendingUploadError(tr("GitHub push 복구 정보가 손상되었습니다.", "The GitHub push recovery data is corrupted.")) from error
 
     @staticmethod
     def _validate(pending: PendingUpload) -> None:
@@ -135,7 +136,7 @@ class PendingUploadStore:
             target_valid = False
         valid = common_valid and phase_valid and target_valid
         if not valid:
-            raise PendingUploadError("GitHub push 복구 정보가 올바르지 않습니다.")
+            raise PendingUploadError(tr("GitHub push 복구 정보가 올바르지 않습니다.", "The GitHub push recovery data is invalid."))
 
     def clear(self) -> None:
         try:

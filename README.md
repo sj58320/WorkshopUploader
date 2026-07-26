@@ -50,6 +50,7 @@ Addon ID의 기본값은 비어 있습니다. 특정 서버의 Addon ID, 제목,
 - 에셋 폴더와 출력 폴더 경로
 - 미리보기 이미지 경로
 - GitHub 저장소, 브랜치, 에셋 경로
+- 화면 언어(한국어/English)
 
 업데이트 내역은 저장하지 않으며 업로드 성공 후 비웁니다. 입력 중이나 작업 시작 시에는 다른 설정도 저장하지 않습니다. 작업 관리자 종료, 강제 종료, 시스템 충돌 때는 새 값이 저장되지 않습니다.
 
@@ -117,12 +118,34 @@ Steamworks `SetItemContent`에는 Addon별 출력 폴더 전체를 전달하므�
 
 ## CLI 사용
 
-`asset_upload.py`와 `asset_update.bat`로도 Steam 업로드 기능을 사용할 수 있습니다. 기존 항목을 업데이트할 때 제목·설명 옵션을 생략하면 Steam의 현재 값을 유지합니다. `--change-note`에는 Steam 업데이트 내역을 전달합니다.
+`workshop_uploader_cli.py`는 GUI와 같은 GitHub 로그인·동기화, VPK 생성, Steam 업로드, Git commit/push 흐름을 명령줄에서 사용합니다. Codex나 다른 자동화에서는 `--json`을 명령 앞에 붙이면 최종 결과가 stdout에 JSON 한 줄로 나오고, 진행 상황은 stderr에 표시됩니다. 성공은 종료 코드 `0`, 실패는 `1`, 사용자 취소는 `130`입니다.
 
 ```powershell
-python .\asset_upload.py 1234567890
+# 기본 GitHub 저장소를 로그인하고 최신화
+python .\workshop_uploader_cli.py --json sync
+
+# 다른 저장소와 브랜치를 최신화
+python .\workshop_uploader_cli.py --json sync --repo owner/assets --branch dev --asset-path .
+
+# GitHub 에셋으로 VPK만 생성
+python .\workshop_uploader_cli.py --json build --addon-id 1234567890
+
+# Steam 업로드 후 같은 업데이트 내역으로 Git commit/push
+python .\workshop_uploader_cli.py --json upload --addon-id 1234567890 --note "fix models`nadd materials"
+
+# GitHub를 사용하지 않고 로컬 폴더로 VPK 생성
+python .\workshop_uploader_cli.py --json build --local-folder "D:\CS2\assets" --addon-id 1234567890
+
+# Steam 성공 후 실패했던 GitHub push만 재시도
+python .\workshop_uploader_cli.py --json retry-push
+```
+
+기본 메시지 언어는 영어입니다. 한국어는 명령 앞에 `--language ko`를 추가합니다. GitHub Device Flow에서 브라우저를 자동으로 열지 않으려면 `--no-browser`를 추가하고 stderr에 표시된 URL과 코드를 사용합니다. `--note`가 비어 있으면 Steam 업데이트 내역과 Git commit 메시지 모두 `Update asset`이 됩니다.
+
+저수준 Steam 업로드만 필요하면 기존 `asset_upload.py`도 계속 사용할 수 있습니다.
+
+```powershell
 python .\asset_upload.py 1234567890 --change-note "fix models`nadd materials"
-python .\asset_upload.py 0 --title "새 애드온" --description "애드온 설명"
 ```
 
 ## 릴리스와 소스 코드 파일

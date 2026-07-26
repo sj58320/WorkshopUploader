@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import sleep, strftime, time
 
+from localization import tr
 from scripts.cs2_vpk import finalize_cs2_workshop_vpk
 from update_notes import normalize_update_note
 
@@ -245,17 +246,25 @@ def load_workshop_module():
 
         if isinstance(error, SteamNotRunningException):
             raise RuntimeError(
-                "Steam 클라이언트가 실행되어 있지 않습니다. "
-                "Steam을 실행하고 로그인한 뒤 다시 시도하세요."
+                tr(
+                    "Steam 클라이언트가 실행되어 있지 않습니다. Steam을 실행하고 로그인한 뒤 다시 시도하세요.",
+                    "The Steam client is not running. Start Steam, sign in, and try again.",
+                )
             ) from error
         if isinstance(error, SteamConnectionException):
             raise RuntimeError(
-                "Steam에 로그인되어 있지 않거나 Steam 클라이언트에 연결할 수 "
-                "없습니다. 로그인 상태와 네트워크를 확인하세요."
+                tr(
+                    "Steam에 로그인되어 있지 않거나 Steam 클라이언트에 연결할 수 없습니다. 로그인 상태와 네트워크를 확인하세요.",
+                    "Steam is not signed in or the client cannot be reached. Check your login and network connection.",
+                )
             ) from error
         if isinstance(error, SteamException):
             raise RuntimeError(
-                f"Steamworks 초기화에 실패했습니다.\n{error}"
+                tr(
+                    "Steamworks 초기화에 실패했습니다.\n{error}",
+                    "Steamworks initialization failed.\n{error}",
+                    error=error,
+                )
             ) from error
         raise
 
@@ -281,11 +290,11 @@ def auto_update(
     title = workshop_title.strip() if workshop_title else None
     description = workshop_description.strip() if workshop_description else None
     if title is not None and len(title) > 128:
-        raise ValueError("Workshop 제목은 128자 이하여야 합니다.")
+        raise ValueError(tr("Workshop 제목은 128자 이하여야 합니다.", "The Workshop title must be 128 characters or fewer."))
     if description is not None and len(description) > 8000:
-        raise ValueError("Workshop 설명은 8,000자 이하여야 합니다.")
+        raise ValueError(tr("Workshop 설명은 8,000자 이하여야 합니다.", "The Workshop description must be 8,000 characters or fewer."))
     if workshop_id == 0 and not pack_only and title is None:
-        raise ValueError("새 창작마당 항목은 Workshop 제목을 입력해야 합니다.")
+        raise ValueError(tr("새 창작마당 항목은 Workshop 제목을 입력해야 합니다.", "A Workshop title is required for a new item."))
 
     workshop = None
     if workshop_id == 0 and not pack_only:
@@ -293,7 +302,7 @@ def auto_update(
         workshop_id = workshop.workshop_create()
         if workshop_id in INVALID_WORKSHOP_IDS:
             raise RuntimeError(
-                "Steam에서 새 창작마당 항목의 유효한 Addon ID를 받지 못했습니다."
+                tr("Steam에서 새 창작마당 항목의 유효한 Addon ID를 받지 못했습니다.", "Steam did not return a valid Addon ID for the new Workshop item.")
             )
 
     source_folder = (
@@ -359,8 +368,12 @@ def auto_update(
     )
     if confirmed_workshop_id != workshop_id:
         raise RuntimeError(
-            "Steam이 확인한 Addon ID가 요청한 Addon ID와 다릅니다. "
-            f"요청: {workshop_id}, 응답: {confirmed_workshop_id}"
+            tr(
+                "Steam이 확인한 Addon ID가 요청한 Addon ID와 다릅니다. 요청: {requested}, 응답: {confirmed}",
+                "The Addon ID confirmed by Steam does not match the requested ID. Requested: {requested}, returned: {confirmed}",
+                requested=workshop_id,
+                confirmed=confirmed_workshop_id,
+            )
         )
 
     logging.info("Complete update Asset")

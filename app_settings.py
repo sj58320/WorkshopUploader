@@ -13,6 +13,7 @@ class AssetSourceMode(str, Enum):
 
 
 PERSISTED_KEYS = (
+    "language",
     "workshop_id",
     "workshop_title",
     "workshop_description",

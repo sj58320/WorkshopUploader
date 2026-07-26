@@ -9,6 +9,7 @@ from app_settings import AssetSourceMode
 from asset_sync import AssetRepository, SyncResult, SyncState
 from asset_upload import UploadResult, auto_update
 from github_auth import GitHubSession
+from localization import tr
 from pending_upload import (
     PENDING_SCHEMA_VERSION,
     PendingPhase,
@@ -80,14 +81,14 @@ class UploadWorkflow:
         target: RepositoryTarget,
     ) -> AssetRepository:
         if session is None:
-            raise WorkflowBlocked("GitHub 로그인이 필요합니다.")
+            raise WorkflowBlocked(tr("GitHub 로그인이 필요합니다.", "GitHub login is required."))
         if self.repository_factory is None:
-            raise WorkflowBlocked("GitHub 저장소 동기화가 구성되지 않았습니다.")
+            raise WorkflowBlocked(tr("GitHub 저장소 동기화가 구성되지 않았습니다.", "GitHub repository sync is not configured."))
         return self.repository_factory(session, target)
 
     def _require_no_pending(self) -> None:
         if self.pending_store is not None and self.pending_store.exists():
-            raise WorkflowBlocked("먼저 GitHub Push 재시도를 완료하세요.")
+            raise WorkflowBlocked(tr("먼저 GitHub Push 재시도를 완료하세요.", "Complete the GitHub push retry first."))
 
     def _ready_repository(
         self,
@@ -118,7 +119,7 @@ class UploadWorkflow:
         self._require_no_pending()
         note = normalize_update_note(raw_note)
         if mode is AssetSourceMode.LOCAL:
-            sync = SyncResult(SyncState.READY, "로컬 모드")
+            sync = SyncResult(SyncState.READY, tr("로컬 모드", "Local mode"))
             asset_folder = options.local_asset_folder
         else:
             target = options.github_target or RepositoryTarget.defaults()
@@ -135,7 +136,7 @@ class UploadWorkflow:
             result.pack_folder,
             result.workshop_id,
             sync,
-            "VPK 생성 완료",
+            tr("VPK 생성 완료", "VPK creation complete"),
         )
 
     def upload(
@@ -158,11 +159,11 @@ class UploadWorkflow:
             return WorkflowResult(
                 result.pack_folder,
                 result.workshop_id,
-                SyncResult(SyncState.READY, "로컬 모드"),
-                "Steam 업로드 완료",
+                SyncResult(SyncState.READY, tr("로컬 모드", "Local mode")),
+                tr("Steam 업로드 완료", "Steam upload complete"),
             )
         if self.pending_store is None:
-            raise WorkflowBlocked("GitHub push 복구 저장소가 구성되지 않았습니다.")
+            raise WorkflowBlocked(tr("GitHub push 복구 저장소가 구성되지 않았습니다.", "GitHub push recovery storage is not configured."))
         target = options.github_target or RepositoryTarget.defaults()
         repository, sync = self._ready_repository(session, target)
         base_commit = repository.head()
@@ -206,7 +207,7 @@ class UploadWorkflow:
             result.pack_folder,
             result.workshop_id,
             sync,
-            "Steam 업로드 및 GitHub push 완료",
+            tr("Steam 업로드 및 GitHub push 완료", "Steam upload and GitHub push complete"),
         )
 
 
@@ -216,12 +217,12 @@ class UploadWorkflow:
         workshop_id: int | None = None,
     ) -> PendingUpload | None:
         if self.pending_store is None:
-            raise WorkflowBlocked("GitHub push 복구 저장소가 구성되지 않았습니다.")
+            raise WorkflowBlocked(tr("GitHub push 복구 저장소가 구성되지 않았습니다.", "GitHub push recovery storage is not configured."))
         pending = self.pending_store.load()
         if pending is None:
-            raise WorkflowBlocked("확인할 Steam 업로드 기록이 없습니다.")
+            raise WorkflowBlocked(tr("확인할 Steam 업로드 기록이 없습니다.", "There is no Steam upload record to confirm."))
         if pending.phase is not PendingPhase.STEAM_STARTED:
-            raise WorkflowBlocked("Steam 결과 확인이 필요한 기록이 아닙니다.")
+            raise WorkflowBlocked(tr("Steam 결과 확인이 필요한 기록이 아닙니다.", "This record does not require Steam result confirmation."))
         if not succeeded:
             self.pending_store.clear()
             return None
@@ -231,7 +232,7 @@ class UploadWorkflow:
             or isinstance(confirmed_id, bool)
             or confirmed_id <= 0
         ):
-            raise WorkflowBlocked("성공한 Steam Workshop Addon ID가 필요합니다.")
+            raise WorkflowBlocked(tr("성공한 Steam Workshop Addon ID가 필요합니다.", "A successful Steam Workshop Addon ID is required."))
         pending = replace(
             pending,
             phase=PendingPhase.STEAM_SUCCEEDED,
@@ -245,13 +246,13 @@ class UploadWorkflow:
         session: GitHubSession | None,
     ) -> WorkflowResult:
         if self.pending_store is None:
-            raise WorkflowBlocked("GitHub push 복구 저장소가 구성되지 않았습니다.")
+            raise WorkflowBlocked(tr("GitHub push 복구 저장소가 구성되지 않았습니다.", "GitHub push recovery storage is not configured."))
         pending = self.pending_store.load()
         if pending is None:
-            raise WorkflowBlocked("재시도할 GitHub push가 없습니다.")
+            raise WorkflowBlocked(tr("재시도할 GitHub push가 없습니다.", "There is no GitHub push to retry."))
         if pending.phase is PendingPhase.STEAM_STARTED:
             raise WorkflowBlocked(
-                "Steam 업로드 결과를 확인할 수 없어 자동 재시도를 중단했습니다."
+                tr("Steam 업로드 결과를 확인할 수 없어 자동 재시도를 중단했습니다.", "Automatic retry stopped because the Steam upload result could not be confirmed.")
             )
         repository = self._repository(session, pending.target)
         sync = repository.prepare()
@@ -275,5 +276,5 @@ class UploadWorkflow:
             None,
             pending.workshop_id,
             sync,
-            "GitHub push 완료",
+            tr("GitHub push 완료", "GitHub push complete"),
         )

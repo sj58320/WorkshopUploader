@@ -63,6 +63,12 @@ class AppSettingsTests(unittest.TestCase):
             path.write_text("not json", encoding="utf-8")
             self.assertEqual(load_settings(path), {})
 
+    def test_language_choice_is_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "settings.json"
+            save_settings(path, {"language": "en"})
+
+            self.assertEqual(load_settings(path), {"language": "en"})
     def test_pending_blocks_mode_change(self) -> None:
         self.assertFalse(can_change_mode(True))
         self.assertTrue(can_change_mode(False))
