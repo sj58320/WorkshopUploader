@@ -136,6 +136,7 @@ class WorkshopUploaderApp:
         self.github_branch = tk.StringVar(value=github_branch)
         self.github_asset_subdir = tk.StringVar(value=github_asset_subdir)
         self.github_profile = tk.StringVar(value=github_profile)
+        self.github_profile_asset_subdir = tk.StringVar(value="")
         self.github_asset_folder = tk.StringVar(value="")
         self.output_folder = tk.StringVar(
             value=saved.get(
@@ -557,7 +558,11 @@ class WorkshopUploaderApp:
         ).grid(row=0, column=4, sticky="w", padx=(0, 6))
         self.github_asset_subdir_entry = ttk.Entry(
             github_target,
-            textvariable=self.github_asset_subdir,
+            textvariable=(
+                self.github_profile_asset_subdir
+                if self.github_profile.get().strip()
+                else self.github_asset_subdir
+            ),
             style="Uploader.TEntry",
             font=FONT_BODY,
         )
@@ -809,8 +814,10 @@ class WorkshopUploaderApp:
                 manifest = WorkshopTargets.load(repository_root)
                 selected = manifest.get(profile)
             except WorkshopTargetsError:
+                self.github_profile_asset_subdir.set("")
                 self.github_asset_folder.set(str(repository_root))
                 return
+            self.github_profile_asset_subdir.set(selected.asset_path.as_posix())
             self.github_asset_folder.set(str(selected.folder(repository_root)))
             self.workshop_id.set(str(selected.workshop_id))
             if not self.workshop_title.get().strip():
@@ -818,6 +825,7 @@ class WorkshopUploaderApp:
             if hasattr(self, "github_profile_entry"):
                 self.github_profile_entry.configure(values=tuple(manifest.targets))
             return
+        self.github_profile_asset_subdir.set("")
         self.github_asset_folder.set(str(target.asset_folder(repository_root)))
 
     def _on_github_profile_change(self) -> None:
@@ -1543,6 +1551,11 @@ class WorkshopUploaderApp:
             widget.configure(state=target_state)
         self.github_profile_entry.configure(state="readonly" if target_state == "normal" else "disabled")
         self.github_asset_subdir_entry.configure(
+            textvariable=(
+                self.github_profile_asset_subdir
+                if self.github_profile.get().strip()
+                else self.github_asset_subdir
+            ),
             state=(
                 "disabled"
                 if target_state == "disabled" or self.github_profile.get().strip()

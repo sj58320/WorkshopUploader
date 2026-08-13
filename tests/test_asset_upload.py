@@ -194,6 +194,7 @@ class SettingsPersistenceTests(unittest.TestCase):
         app.root = Mock()
         app.running = False
         values = {
+            "language": "ko",
             "workshop_id": "1234567890",
             "workshop_title": "Title",
             "workshop_description": "Description",
@@ -204,7 +205,9 @@ class SettingsPersistenceTests(unittest.TestCase):
             "github_repository": "octo-org/assets",
             "github_branch": "dev",
             "github_asset_subdir": "game/assets",
+            "github_profile": "",
         }
+        app.language = Mock(**{"get.return_value": values["language"]})
         app.workshop_id = Mock(**{"get.return_value": values["workshop_id"]})
         app.workshop_title = Mock(
             **{"get.return_value": values["workshop_title"]}
@@ -223,6 +226,7 @@ class SettingsPersistenceTests(unittest.TestCase):
         app.github_asset_subdir = Mock(
             **{"get.return_value": values["github_asset_subdir"]}
         )
+        app.github_profile = Mock(**{"get.return_value": values["github_profile"]})
 
         with patch.object(workshop_uploader_gui, "save_settings") as save:
             app._on_close()
@@ -275,6 +279,7 @@ class SettingsPersistenceTests(unittest.TestCase):
             app.github_asset_subdir = Mock(
                 **{"get.return_value": "game/additional_files"}
             )
+            app.github_profile = Mock(**{"get.return_value": ""})
 
             options = app._parse_options()
 
@@ -283,6 +288,39 @@ class SettingsPersistenceTests(unittest.TestCase):
         self.assertEqual(
             options.github_target.asset_subdir_text,
             "game/additional_files",
+        )
+
+    def test_profile_refresh_displays_manifest_asset_path(self) -> None:
+        app = object.__new__(workshop_uploader_gui.WorkshopUploaderApp)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "in" / "packs" / "rss-core").mkdir(parents=True)
+            (root / "workshop_targets.json").write_text(
+                '{"version":1,"targets":{"core":{'
+                '"workshop_id":0,"title":"RSS ZE ASSET - Core",'
+                '"asset_path":"in/packs/rss-core"}}}',
+                encoding="utf-8",
+            )
+            target = Mock()
+            target.clone_root.return_value = root
+            app._repository_target = Mock(return_value=target)
+            app.github_profile = Mock(**{"get.return_value": "core"})
+            app.github_asset_subdir = Mock(
+                **{"get.return_value": "in/additional_files"}
+            )
+            app.github_profile_asset_subdir = Mock()
+            app.github_asset_folder = Mock()
+            app.workshop_id = Mock()
+            app.workshop_title = Mock(**{"get.return_value": ""})
+
+            app._refresh_github_asset_folder()
+
+        app.github_profile_asset_subdir.set.assert_called_once_with(
+            "in/packs/rss-core"
+        )
+        app.github_asset_subdir.set.assert_not_called()
+        app.github_asset_folder.set.assert_called_once_with(
+            str(root / "in" / "packs" / "rss-core")
         )
 
     def test_close_while_running_does_not_save(self) -> None:
