@@ -38,6 +38,18 @@ class WorkshopUploaderCliTests(unittest.TestCase):
         self.assertEqual(args.addon_id, 1234567890)
         self.assertEqual(args.note, "update models")
 
+    def test_profile_build_does_not_require_addon_id(self) -> None:
+        args = workshop_uploader_cli.parse_args(
+            ["build", "--profile", "weapon"]
+        )
+
+        self.assertEqual(args.profile, "weapon")
+        self.assertIsNone(args.addon_id)
+        self.assertEqual(
+            workshop_uploader_cli.CliApplication._target(args).asset_subdir_text,
+            ".",
+        )
+
     def test_json_success_is_one_machine_readable_object(self) -> None:
         payload = {
             "ok": True,

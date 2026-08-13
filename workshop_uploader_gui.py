@@ -31,6 +31,7 @@ from repository_target import (
 from update_notes import UPDATE_NOTE_PLACEHOLDER
 from upload_workflow import UploadOptions, UploadWorkflow, WorkflowResult
 from windows_credentials import WindowsCredentialStore
+from workshop_targets import WorkshopTargets, WorkshopTargetsError
 
 
 APP_TITLE = "CS2 Workshop Uploader"
@@ -99,6 +100,12 @@ class WorkshopUploaderApp:
         github_repository = saved.get("github_repository", DEFAULT_REPOSITORY)
         github_branch = saved.get("github_branch", DEFAULT_BRANCH)
         github_asset_subdir = saved.get("github_asset_subdir", DEFAULT_ASSET_SUBDIR)
+        github_profile = saved.get("github_profile", "")
+        if (
+            "github_profile" not in saved
+            and github_repository.casefold() == DEFAULT_REPOSITORY.casefold()
+        ):
+            github_profile = "core"
         if self.pending_store.exists():
             saved_mode = AssetSourceMode.GITHUB
             try:
@@ -107,6 +114,7 @@ class WorkshopUploaderApp:
                     github_repository = pending.target.full_name
                     github_branch = pending.target.branch
                     github_asset_subdir = pending.target.asset_subdir_text
+                    github_profile = pending.workshop_profile or ""
             except PendingUploadError:
                 pass
         self.asset_source_mode = tk.StringVar(
@@ -127,6 +135,7 @@ class WorkshopUploaderApp:
         self.github_repository = tk.StringVar(value=github_repository)
         self.github_branch = tk.StringVar(value=github_branch)
         self.github_asset_subdir = tk.StringVar(value=github_asset_subdir)
+        self.github_profile = tk.StringVar(value=github_profile)
         self.github_asset_folder = tk.StringVar(value="")
         self.output_folder = tk.StringVar(
             value=saved.get(
@@ -152,6 +161,9 @@ class WorkshopUploaderApp:
             self.github_asset_subdir,
         ):
             variable.trace_add("write", lambda *_args: self._on_github_target_change())
+        self.github_profile.trace_add(
+            "write", lambda *_args: self._on_github_profile_change()
+        )
         self.root.after(100, self._drain_events)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         if saved_mode is None and not self.pending_store.exists():
@@ -197,6 +209,7 @@ class WorkshopUploaderApp:
             "github_repository": self.github_repository.get(),
             "github_branch": self.github_branch.get(),
             "github_asset_subdir": self.github_asset_subdir.get(),
+            "github_profile": self.github_profile.get(),
         }
         mode = getattr(self, "asset_source_mode", None)
         if mode is not None and mode.get() in {
@@ -550,6 +563,31 @@ class WorkshopUploaderApp:
         )
         self.github_asset_subdir_entry.grid(row=0, column=5, sticky="ew")
 
+        tk.Label(
+            github_target,
+            text=tr("패키지 프로필", "Package profile"),
+            bg=CARD,
+            fg=TEXT,
+            font=FONT_SMALL,
+        ).grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(10, 0))
+        self.github_profile_entry = ttk.Combobox(
+            github_target,
+            textvariable=self.github_profile,
+            values=("", "core", "character", "weapon", "weapon2"),
+            state="readonly",
+            font=FONT_BODY,
+        )
+        self.github_profile_entry.grid(
+            row=1, column=1, sticky="ew", padx=(0, 12), pady=(10, 0)
+        )
+        tk.Label(
+            github_target,
+            text=tr("비워 두면 수동 ID/경로 사용", "Leave blank for manual ID/path"),
+            bg=CARD,
+            fg=MUTED,
+            font=FONT_SMALL,
+        ).grid(row=1, column=2, columnspan=4, sticky="w", pady=(10, 0))
+
         self.github_progress_frame = tk.Frame(self.github_card, bg=CARD)
         self.github_progress_frame.grid(
             row=2, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 14)
@@ -751,10 +789,11 @@ class WorkshopUploaderApp:
             return None
 
     def _repository_target(self) -> RepositoryTarget:
+        asset_subdir = "." if self.github_profile.get().strip() else self.github_asset_subdir.get()
         return RepositoryTarget.parse(
             self.github_repository.get(),
             self.github_branch.get(),
-            self.github_asset_subdir.get(),
+            asset_subdir,
         )
 
     def _refresh_github_asset_folder(self) -> None:
@@ -764,7 +803,27 @@ class WorkshopUploaderApp:
             self.github_asset_folder.set("")
             return
         repository_root = target.clone_root(asset_upload.RUNTIME_PATH)
+        profile = self.github_profile.get().strip()
+        if profile:
+            try:
+                manifest = WorkshopTargets.load(repository_root)
+                selected = manifest.get(profile)
+            except WorkshopTargetsError:
+                self.github_asset_folder.set(str(repository_root))
+                return
+            self.github_asset_folder.set(str(selected.folder(repository_root)))
+            self.workshop_id.set(str(selected.workshop_id))
+            if not self.workshop_title.get().strip():
+                self.workshop_title.set(selected.title)
+            if hasattr(self, "github_profile_entry"):
+                self.github_profile_entry.configure(values=tuple(manifest.targets))
+            return
         self.github_asset_folder.set(str(target.asset_folder(repository_root)))
+
+    def _on_github_profile_change(self) -> None:
+        self._refresh_github_asset_folder()
+        self._save_settings()
+        self._apply_availability()
 
     def _on_github_target_change(self) -> None:
         self._refresh_github_asset_folder()
@@ -966,12 +1025,19 @@ class WorkshopUploaderApp:
         os.startfile(folder)
 
     def _parse_options(self) -> UploadOptions:
+        profile = (
+            self.github_profile.get().strip()
+            if self._current_mode() is AssetSourceMode.GITHUB
+            else ""
+        )
         try:
-            workshop_id = int(self.workshop_id.get().strip())
+            workshop_id = (
+                None if profile else int(self.workshop_id.get().strip())
+            )
             chunk_size = int(self.chunk_size.get().strip())
         except ValueError as error:
             raise ValueError(tr("Addon ID와 청크 크기는 숫자로 입력하세요.", "Enter numeric values for the Addon ID and chunk size.")) from error
-        if workshop_id < 0:
+        if workshop_id is not None and workshop_id < 0:
             raise ValueError(tr("Addon ID는 0 이상의 숫자여야 합니다.", "The Addon ID must be zero or a positive number."))
         if chunk_size < 1:
             raise ValueError(tr("청크 크기는 1 MiB 이상이어야 합니다.", "The chunk size must be at least 1 MiB."))
@@ -1025,6 +1091,7 @@ class WorkshopUploaderApp:
             output_folder,
             preview_path,
             github_target=github_target,
+            workshop_profile=profile or None,
         )
 
     def _bundled_git_path(self) -> Path:
@@ -1196,7 +1263,12 @@ class WorkshopUploaderApp:
             return
         try:
             options = self._parse_options()
-            if not pack_only and options.workshop_id == 0 and options.title is None:
+            if (
+                not pack_only
+                and options.workshop_profile is None
+                and options.workshop_id == 0
+                and options.title is None
+            ):
                 raise ValueError(tr("새 Workshop 항목은 제목을 입력해야 합니다.", "A title is required for a new Workshop item."))
         except ValueError as error:
             messagebox.showerror(APP_TITLE, str(error), parent=self.root)
@@ -1209,15 +1281,22 @@ class WorkshopUploaderApp:
             )
             return
         if not pack_only:
-            target = (
-                tr("새 Steam Workshop 항목", "a new Steam Workshop item")
-                if options.workshop_id == 0
-                else tr(
-                    "Steam Workshop 항목 {workshop_id}",
-                    "Steam Workshop item {workshop_id}",
-                    workshop_id=options.workshop_id,
+            if options.workshop_profile is not None:
+                target = tr(
+                    "Workshop 프로필 {profile}",
+                    "Workshop profile {profile}",
+                    profile=options.workshop_profile,
                 )
-            )
+            else:
+                target = (
+                    tr("새 Steam Workshop 항목", "a new Steam Workshop item")
+                    if options.workshop_id == 0
+                    else tr(
+                        "Steam Workshop 항목 {workshop_id}",
+                        "Steam Workshop item {workshop_id}",
+                        workshop_id=options.workshop_id,
+                    )
+                )
             if not messagebox.askyesno(
                 APP_TITLE,
                 tr("{target}에 VPK 전체를 업로드합니다.\n\n계속할까요?", "The complete VPK will be uploaded to {target}.\n\nContinue?", target=target),
@@ -1303,6 +1382,7 @@ class WorkshopUploaderApp:
                     self.github_progress_frame.grid_remove()
                     self.session, sync, target = value
                     self.sync_state = sync.state
+                    self._refresh_github_asset_folder()
                     self.github_status.set(
                         tr(
                             "{message} · {target} · 로그인: {login}",
@@ -1430,7 +1510,6 @@ class WorkshopUploaderApp:
         for button in self.language_buttons:
             button.configure(state=common_state)
         for widget in (
-            self.id_entry,
             self.chunk_entry,
             self.title_entry,
             self.description_entry,
@@ -1442,6 +1521,15 @@ class WorkshopUploaderApp:
             self.output_button,
         ):
             widget.configure(state=common_state)
+        self.id_entry.configure(
+            state=(
+                "readonly"
+                if not self.running
+                and mode is AssetSourceMode.GITHUB
+                and bool(self.github_profile.get().strip())
+                else common_state
+            )
+        )
         self.update_note.configure(state=common_state)
         target_state = (
             "normal"
@@ -1451,9 +1539,16 @@ class WorkshopUploaderApp:
         for widget in (
             self.github_repository_entry,
             self.github_branch_entry,
-            self.github_asset_subdir_entry,
         ):
             widget.configure(state=target_state)
+        self.github_profile_entry.configure(state="readonly" if target_state == "normal" else "disabled")
+        self.github_asset_subdir_entry.configure(
+            state=(
+                "disabled"
+                if target_state == "disabled" or self.github_profile.get().strip()
+                else "normal"
+            )
+        )
         if mode is AssetSourceMode.LOCAL:
             self.asset_path_entry.configure(
                 textvariable=self.asset_folder, state=common_state

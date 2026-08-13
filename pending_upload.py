@@ -15,7 +15,7 @@ from repository_target import (
 )
 
 
-PENDING_SCHEMA_VERSION = 3
+PENDING_SCHEMA_VERSION = 4
 
 
 class PendingPhase(str, Enum):
@@ -35,6 +35,7 @@ class PendingUpload:
     github_repository: str = DEFAULT_REPOSITORY
     github_branch: str = DEFAULT_BRANCH
     github_asset_subdir: str = DEFAULT_ASSET_SUBDIR
+    workshop_profile: str | None = None
 
     @property
     def target(self) -> RepositoryTarget:
@@ -80,6 +81,12 @@ class PendingUploadStore:
                     github_repository=default_target.full_name,
                     github_branch=default_target.branch,
                     github_asset_subdir=default_target.asset_subdir_text,
+                    workshop_profile=None,
+                )
+            elif payload.get("schema_version") == 3:
+                payload.update(
+                    schema_version=PENDING_SCHEMA_VERSION,
+                    workshop_profile=None,
                 )
             elif payload.get("schema_version") == PENDING_SCHEMA_VERSION:
                 required_target_fields = (
@@ -131,7 +138,13 @@ class PendingUploadStore:
             )
         try:
             pending.target
-            target_valid = True
+            target_valid = (
+                pending.workshop_profile is None
+                or (
+                    isinstance(pending.workshop_profile, str)
+                    and bool(pending.workshop_profile)
+                )
+            )
         except ValueError:
             target_valid = False
         valid = common_valid and phase_valid and target_valid

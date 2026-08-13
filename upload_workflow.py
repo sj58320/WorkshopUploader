@@ -18,11 +18,12 @@ from pending_upload import (
 )
 from repository_target import RepositoryTarget
 from update_notes import normalize_update_note
+from workshop_targets import MANIFEST_NAME, WorkshopTargets
 
 
 @dataclass(frozen=True)
 class UploadOptions:
-    workshop_id: int
+    workshop_id: int | None
     chunk_size_mb: int
     title: str | None
     description: str | None
@@ -30,6 +31,7 @@ class UploadOptions:
     output_folder: Path
     preview_path: Path | None
     github_target: RepositoryTarget | None = None
+    workshop_profile: str | None = None
     isolated_output: bool = True
 
     def uploader_kwargs(self, asset_folder: Path) -> dict:
@@ -109,6 +111,32 @@ class UploadWorkflow:
         _repository, sync = self._ready_repository(session, target)
         return sync
 
+    @staticmethod
+    def _resolve_profile(
+        repository: AssetRepository,
+        options: UploadOptions,
+    ) -> tuple[UploadOptions, Path, WorkshopTargets | None]:
+        if options.workshop_profile is None:
+            if options.workshop_id is None:
+                raise WorkflowBlocked("A Workshop Addon ID is required.")
+            return options, repository.asset_folder, None
+        manifest = WorkshopTargets.load(repository.root)
+        profile = manifest.get(options.workshop_profile)
+        asset_folder = profile.folder(repository.root)
+        if not asset_folder.is_dir():
+            raise WorkflowBlocked(
+                f"Workshop profile asset folder does not exist: {asset_folder}"
+            )
+        return (
+            replace(
+                options,
+                workshop_id=profile.workshop_id,
+                title=options.title or profile.title,
+            ),
+            asset_folder,
+            manifest,
+        )
+
     def build_vpk(
         self,
         mode: AssetSourceMode,
@@ -119,17 +147,22 @@ class UploadWorkflow:
         self._require_no_pending()
         note = normalize_update_note(raw_note)
         if mode is AssetSourceMode.LOCAL:
+            if options.workshop_id is None:
+                raise WorkflowBlocked("A Workshop Addon ID is required.")
             sync = SyncResult(SyncState.READY, tr("로컬 모드", "Local mode"))
             asset_folder = options.local_asset_folder
+            resolved_options = options
         else:
             target = options.github_target or RepositoryTarget.defaults()
             repository, sync = self._ready_repository(session, target)
-            asset_folder = repository.asset_folder
+            resolved_options, asset_folder, _manifest = self._resolve_profile(
+                repository, options
+            )
         result: UploadResult = self.local_uploader(
-            options.workshop_id,
-            options.chunk_size_mb,
+            resolved_options.workshop_id,
+            resolved_options.chunk_size_mb,
             True,
-            **options.uploader_kwargs(asset_folder),
+            **resolved_options.uploader_kwargs(asset_folder),
             change_note=note,
         )
         return WorkflowResult(
@@ -149,6 +182,8 @@ class UploadWorkflow:
         self._require_no_pending()
         note = normalize_update_note(raw_note)
         if mode is AssetSourceMode.LOCAL:
+            if options.workshop_id is None:
+                raise WorkflowBlocked("A Workshop Addon ID is required.")
             result: UploadResult = self.local_uploader(
                 options.workshop_id,
                 options.chunk_size_mb,
@@ -166,11 +201,14 @@ class UploadWorkflow:
             raise WorkflowBlocked(tr("GitHub push 복구 저장소가 구성되지 않았습니다.", "GitHub push recovery storage is not configured."))
         target = options.github_target or RepositoryTarget.defaults()
         repository, sync = self._ready_repository(session, target)
+        resolved_options, asset_folder, manifest = self._resolve_profile(
+            repository, options
+        )
         base_commit = repository.head()
         pending = PendingUpload(
             schema_version=PENDING_SCHEMA_VERSION,
             phase=PendingPhase.STEAM_STARTED,
-            workshop_id=options.workshop_id,
+            workshop_id=resolved_options.workshop_id,
             note=note,
             steam_succeeded_at=None,
             base_commit=base_commit,
@@ -178,14 +216,15 @@ class UploadWorkflow:
             github_repository=target.full_name,
             github_branch=target.branch,
             github_asset_subdir=target.asset_subdir_text,
+            workshop_profile=options.workshop_profile,
         )
         self.pending_store.save(pending)
         try:
             result = self.local_uploader(
-                options.workshop_id,
-                options.chunk_size_mb,
+                resolved_options.workshop_id,
+                resolved_options.chunk_size_mb,
                 False,
-                **options.uploader_kwargs(repository.asset_folder),
+                **resolved_options.uploader_kwargs(asset_folder),
                 change_note=note,
             )
         except Exception:
@@ -198,7 +237,15 @@ class UploadWorkflow:
             steam_succeeded_at=self.clock(),
         )
         self.pending_store.save(pending)
-        commit_id = repository.commit(note, session.user)
+        if manifest is not None:
+            manifest.set_workshop_id(options.workshop_profile, result.workshop_id)
+        commit_paths = None
+        if manifest is not None:
+            commit_paths = (
+                manifest.get(options.workshop_profile).asset_path.as_posix(),
+                MANIFEST_NAME,
+            )
+        commit_id = repository.commit(note, session.user, commit_paths)
         pending = replace(pending, commit_id=commit_id)
         self.pending_store.save(pending)
         repository.push()
@@ -258,6 +305,17 @@ class UploadWorkflow:
         sync = repository.prepare()
         if sync.state is not SyncState.READY:
             raise WorkflowBlocked(sync.message, sync)
+        commit_paths = None
+        if pending.workshop_profile is not None:
+            manifest = WorkshopTargets.load(repository.root)
+            manifest.set_workshop_id(
+                pending.workshop_profile,
+                pending.workshop_id,
+            )
+            commit_paths = (
+                manifest.get(pending.workshop_profile).asset_path.as_posix(),
+                MANIFEST_NAME,
+            )
         commit_already_created = (
             pending.commit_id is None
             and repository.head() != pending.base_commit
@@ -267,7 +325,11 @@ class UploadWorkflow:
             if commit_already_created:
                 commit_id = repository.head()
             else:
-                commit_id = repository.commit(pending.note, session.user)
+                commit_id = repository.commit(
+                    pending.note,
+                    session.user,
+                    commit_paths,
+                )
             pending = replace(pending, commit_id=commit_id)
             self.pending_store.save(pending)
         repository.push()

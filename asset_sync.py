@@ -326,13 +326,21 @@ class AssetRepository:
             )
         return SyncResult(SyncState.READY, tr("최신 상태", "Up to date"))
 
-    def commit(self, note: str, user: GitHubUser) -> str:
+    def commit(
+        self,
+        note: str,
+        user: GitHubUser,
+        paths: tuple[str, ...] | None = None,
+    ) -> str:
         self._require_valid_repository()
         self._git(["config", "user.name", user.login])
         self._git(["config", "user.email", user.commit_email])
-        self._git(["add", "-A", "--", self.asset_subdir.as_posix()])
-        self._git(["commit", "--only", "--allow-empty", "--file", "-", "--",
-                   self.asset_subdir.as_posix()], stdin=note)
+        selected_paths = paths or (self.asset_subdir.as_posix(),)
+        self._git(["add", "-A", "--", *selected_paths])
+        self._git(
+            ["commit", "--only", "--allow-empty", "--file", "-", "--", *selected_paths],
+            stdin=note,
+        )
         return self.head()
 
     def push(self) -> None:

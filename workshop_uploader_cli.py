@@ -50,7 +50,11 @@ def _add_upload_arguments(parser: argparse.ArgumentParser) -> None:
         type=Path,
         help="Use a local asset folder instead of GitHub sync",
     )
-    parser.add_argument("--addon-id", required=True, type=int)
+    parser.add_argument("--addon-id", type=int)
+    parser.add_argument(
+        "--profile",
+        help="Workshop profile from workshop_targets.json",
+    )
     parser.add_argument("--chunk-size-mb", type=int, default=100)
     parser.add_argument("--output-folder", type=Path, default=DEFAULT_OUTPUT_FOLDER)
     parser.add_argument("--preview", type=Path)
@@ -221,7 +225,8 @@ class CliApplication:
 
     @staticmethod
     def _target(args: argparse.Namespace) -> RepositoryTarget:
-        return RepositoryTarget.parse(args.repo, args.branch, args.asset_path)
+        asset_path = "." if getattr(args, "profile", None) else args.asset_path
+        return RepositoryTarget.parse(args.repo, args.branch, asset_path)
 
     @staticmethod
     def _options(
@@ -246,6 +251,7 @@ class CliApplication:
                 else None
             ),
             github_target=target,
+            workshop_profile=args.profile,
         )
 
     def _sync(self, args: argparse.Namespace) -> dict[str, object]:
@@ -268,6 +274,14 @@ class CliApplication:
         *,
         upload: bool,
     ) -> dict[str, object]:
+        if args.profile and args.addon_id is not None:
+            raise ValueError("Use either --profile or --addon-id, not both")
+        if args.local_folder is not None and args.profile:
+            raise ValueError("--profile is available only with GitHub sync")
+        if not args.profile and args.addon_id is None:
+            raise ValueError("Either --profile or --addon-id is required")
+        if args.addon_id is not None and args.addon_id < 0:
+            raise ValueError("--addon-id must be zero or a positive integer")
         if args.local_folder is not None:
             mode = AssetSourceMode.LOCAL
             target = None
@@ -291,6 +305,7 @@ class CliApplication:
             "source": mode.value,
             "repository": target.full_name if target is not None else None,
             "branch": target.branch if target is not None else None,
+            "profile": args.profile,
         }
 
     def _retry_push(self) -> dict[str, object]:

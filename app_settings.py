@@ -25,6 +25,7 @@ PERSISTED_KEYS = (
     "github_repository",
     "github_branch",
     "github_asset_subdir",
+    "github_profile",
 )
 
 

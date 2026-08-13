@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
+from dataclasses import replace
 from pathlib import Path
 
 from app_settings import AssetSourceMode
@@ -25,6 +27,7 @@ class FakeUploader:
         self.calls: list[dict] = []
         self.error: Exception | None = None
         self.on_call = None
+        self.result_workshop_id: int | None = None
 
     def __call__(self, workshop_id, chunk_size_mb, pack_only, **kwargs):
         self.calls.append(
@@ -39,15 +42,20 @@ class FakeUploader:
             self.on_call()
         if self.error is not None:
             raise self.error
-        return UploadResult(Path(kwargs["output_folder"]), workshop_id, not pack_only)
+        return UploadResult(
+            Path(kwargs["output_folder"]),
+            self.result_workshop_id or workshop_id,
+            not pack_only,
+        )
 
 
 class FakeRepository:
     def __init__(self, root: Path) -> None:
+        self.root = root
         self.asset_folder = root / "in" / "additional_files"
         self.asset_folder.mkdir(parents=True)
         self.prepare_result = SyncResult(SyncState.READY, "최신 상태")
-        self.commit_calls: list[tuple[str, GitHubUser]] = []
+        self.commit_calls: list[tuple[str, GitHubUser, tuple[str, ...] | None]] = []
         self.push_errors: list[Exception | None] = []
         self.push_count = 0
         self.current_head = "a" * 40
@@ -66,8 +74,13 @@ class FakeRepository:
         return self.pending_commits
 
 
-    def commit(self, note: str, user: GitHubUser) -> str:
-        self.commit_calls.append((note, user))
+    def commit(
+        self,
+        note: str,
+        user: GitHubUser,
+        paths: tuple[str, ...] | None = None,
+    ) -> str:
+        self.commit_calls.append((note, user, paths))
         self.current_head = "b" * 40
         self.current_head_message = note
         self.pending_commits = True
@@ -202,6 +215,54 @@ class UploadWorkflowTests(unittest.TestCase):
         )
         self.assertFalse(self.pending_store.exists())
 
+    def test_profile_uses_manifest_path_and_persists_new_workshop_id(self) -> None:
+        asset_folder = self.repository.root / "in" / "packs" / "rss-weapon"
+        asset_folder.mkdir(parents=True)
+        manifest_path = self.repository.root / "workshop_targets.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "targets": {
+                        "weapon": {
+                            "workshop_id": 0,
+                            "title": "RSS ZE ASSET - Weapons",
+                            "asset_path": "in/packs/rss-weapon",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.uploader.result_workshop_id = 987654321
+        options = replace(
+            self.options,
+            workshop_id=None,
+            title=None,
+            workshop_profile="weapon",
+        )
+
+        result = self.workflow.upload(
+            AssetSourceMode.GITHUB,
+            options,
+            "create weapon pack",
+            SESSION,
+        )
+
+        self.assertEqual(result.workshop_id, 987654321)
+        self.assertEqual(self.uploader.calls[0]["workshop_id"], 0)
+        self.assertEqual(self.uploader.calls[0]["asset_folder"], asset_folder)
+        self.assertEqual(
+            self.uploader.calls[0]["workshop_title"],
+            "RSS ZE ASSET - Weapons",
+        )
+        self.assertEqual(
+            self.repository.commit_calls[0][2],
+            ("in/packs/rss-weapon", "workshop_targets.json"),
+        )
+        saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["targets"]["weapon"]["workshop_id"], 987654321)
+
     def test_push_failure_retry_skips_second_steam_upload(self) -> None:
         self.repository.push_errors = [RuntimeError("offline"), None]
 
@@ -225,7 +286,7 @@ class UploadWorkflowTests(unittest.TestCase):
         self.repository.pending_commits = True
         self.repository.current_head_message = "Update asset"
         self.pending_store.value = PendingUpload(
-            schema_version=3,
+            schema_version=4,
             phase=PendingPhase.STEAM_SUCCEEDED,
             workshop_id=1234567890,
             note="Update asset",
@@ -245,7 +306,7 @@ class UploadWorkflowTests(unittest.TestCase):
         self.repository.current_head_message = "older local commit"
         self.repository.pending_commits = True
         self.pending_store.value = PendingUpload(
-            schema_version=3,
+            schema_version=4,
             phase=PendingPhase.STEAM_SUCCEEDED,
             workshop_id=1234567890,
             note="Update asset",
@@ -263,7 +324,7 @@ class UploadWorkflowTests(unittest.TestCase):
 
     def test_ambiguous_steam_result_blocks_automatic_retry(self) -> None:
         self.pending_store.value = PendingUpload(
-            schema_version=3,
+            schema_version=4,
             phase=PendingPhase.STEAM_STARTED,
             workshop_id=1234567890,
             note="Update asset",
@@ -281,7 +342,7 @@ class UploadWorkflowTests(unittest.TestCase):
 
     def test_confirmed_steam_success_continues_with_git_only(self) -> None:
         self.pending_store.value = PendingUpload(
-            schema_version=3,
+            schema_version=4,
             phase=PendingPhase.STEAM_STARTED,
             workshop_id=0,
             note="Update asset",
@@ -303,7 +364,7 @@ class UploadWorkflowTests(unittest.TestCase):
 
     def test_confirmed_steam_failure_clears_ambiguous_record(self) -> None:
         self.pending_store.value = PendingUpload(
-            schema_version=3,
+            schema_version=4,
             phase=PendingPhase.STEAM_STARTED,
             workshop_id=1234567890,
             note="Update asset",

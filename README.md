@@ -4,7 +4,7 @@ EXE 하나로 CS2 에셋을 멀티청크 VPK로 만들고 Steam 창작마당에 
 
 ## 다운로드
 
-[Releases](https://github.com/sj58320/WorkshopUploader/releases)에서 `WorkshopUploader-v0.2.0.exe`만 받아 실행하면 됩니다. Python, VPKEdit CLI, SteamworksPy와 필요한 DLL은 EXE 안에 포함되어 있습니다. 실제 에셋 파일은 포함되지 않으며 사용자가 폴더를 선택해야 합니다.
+[Releases](https://github.com/sj58320/WorkshopUploader/releases)에서 `WorkshopUploader-v0.3.0.exe`만 받아 실행하면 됩니다. Python, VPKEdit CLI, SteamworksPy와 필요한 DLL은 EXE 안에 포함되어 있습니다. 실제 에셋 파일은 포함되지 않으며 사용자가 폴더를 선택해야 합니다.
 
 개인 빌드라 코드 서명이 없으므로 Windows SmartScreen 경고가 표시될 수 있습니다.
 
@@ -78,6 +78,24 @@ GitHub 모드의 기본값은 다음과 같으며 화면에서 다른 저장소�
 에셋 경로: in/additional_files
 ```
 
+`workshop_targets.json`이 있는 저장소에서는 패키지 프로필을 선택할 수 있습니다.
+프로필은 Workshop ID, 제목, 에셋 경로를 함께 관리합니다. ID가 `0`인 프로필을
+처음 업로드하면 Steam이 반환한 신규 ID를 매니페스트에 기록한 뒤 같은 업데이트
+내역으로 commit/push합니다.
+
+```json
+{
+  "version": 1,
+  "targets": {
+    "core": {
+      "workshop_id": 0,
+      "title": "RSS ZE ASSET - Core",
+      "asset_path": "in/packs/rss-core"
+    }
+  }
+}
+```
+
 - `저장소`: `owner/repo` 또는 `https://github.com/owner/repo` 형식
 - `브랜치`: 동기화하고 push할 Git 브랜치
 - `에셋 경로`: 저장소 루트 기준 상대 경로. 저장소 전체를 에셋으로 쓰려면 `.` 입력
@@ -133,6 +151,10 @@ python .\workshop_uploader_cli.py --json build --addon-id 1234567890
 # Steam 업로드 후 같은 업데이트 내역으로 Git commit/push
 python .\workshop_uploader_cli.py --json upload --addon-id 1234567890 --note "fix models`nadd materials"
 
+# 매니페스트의 프로필로 빌드 또는 업로드
+python .\workshop_uploader_cli.py --json build --profile core
+python .\workshop_uploader_cli.py --json upload --profile weapon --note "update weapons"
+
 # GitHub를 사용하지 않고 로컬 폴더로 VPK 생성
 python .\workshop_uploader_cli.py --json build --local-folder "D:\CS2\assets" --addon-id 1234567890
 
@@ -150,7 +172,7 @@ python .\asset_upload.py 1234567890 --change-note "fix models`nadd materials"
 
 ## 릴리스와 소스 코드 파일
 
-릴리스에서 직접 사용하는 첨부 파일은 `WorkshopUploader-v0.2.0.exe` 하나입니다. GitHub가 모든 릴리스에 자동으로 붙이는 `Source code (zip)`과 `Source code (tar.gz)`는 저장소 전체의 스냅샷이라 삭제할 수 없습니다.
+릴리스에서 직접 사용하는 첨부 파일은 `WorkshopUploader-v0.3.0.exe` 하나입니다. GitHub가 모든 릴리스에 자동으로 붙이는 `Source code (zip)`과 `Source code (tar.gz)`는 저장소 전체의 스냅샷이라 삭제할 수 없습니다.
 
 소스 저장소에는 현재 GUI, CLI, GitHub 동기화, 빌드와 테스트에 필요한 파일만 포함합니다. 생성된 VPK, 사용자 설정, 로그인 토큰, 내려받은 MinGit, 구형 RSS 서버 자동화 스크립트와 CS2MapPacker 런타임은 포함하지 않습니다.
 
@@ -165,9 +187,9 @@ python .\asset_upload.py 1234567890 --change-note "fix models`nadd materials"
 ```powershell
 python -m pip install -r requirements-build.txt
 $env:WORKSHOP_UPLOADER_GITHUB_CLIENT_ID = "GitHub App client ID"
-powershell -ExecutionPolicy Bypass -File .\scripts\build_release.ps1 -Version v0.2.0
+powershell -ExecutionPolicy Bypass -File .\scripts\build_release.ps1 -Version v0.3.0
 ```
 
-빌드 스크립트는 공식 MinGit 2.55.0.3 압축 파일을 내려받아 고정된 SHA-256을 확인하고 EXE 안에 포함합니다. 결과물은 `dist/WorkshopUploader-v0.2.0.exe` 하나이며 실제 에셋이나 생성된 VPK는 포함하지 않습니다.
+빌드 스크립트는 공식 MinGit 2.55.0.3 압축 파일을 내려받아 고정된 SHA-256을 확인하고 EXE 안에 포함합니다. 결과물은 `dist/WorkshopUploader-v0.3.0.exe` 하나이며 실제 에셋이나 생성된 VPK는 포함하지 않습니다.
 
 서드파티 구성요소와 라이선스는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 확인하세요.
